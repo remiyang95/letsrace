@@ -17,9 +17,67 @@ body {
   margin: 0;
   padding: 0;
   display: block;
-  position: relative;
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 1 !important;
   overflow: hidden;
+  background: transparent !important;
 }
+#threejs-container canvas {
+  border: none !important;
+}
+
+#countdown {
+  background: rgba(0,0,0,0.7) !important;
+  border: none !important;
+  z-index: 99999999 !important;
+  position: fixed !important;
+  top: 0 !important;
+  left: 0 !important;
+  width: 100vw !important;
+  height: 100vh !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  font-size: 10vw !important;
+  color: #fff !important;
+  text-align: center !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  box-sizing: border-box !important;
+  overflow: visible !important;
+}
+#countdown span {
+  display: inline-block !important;
+  margin: 0 !important;
+  padding: 0.2em 0.5em !important;
+  vertical-align: middle !important;
+  position: static !important;
+  transform: none !important;
+  background: none !important;
+  background-color: transparent !important;
+  color: #fff !important;
+  font-size: 8vw !important;
+  border-radius: 0.2em !important;
+  font-family: Arial, sans-serif !important;
+  box-shadow: none !important;
+  text-shadow: none !important;
+  text-align: center !important;
+}
+#countdown span {
+  background: none !important;
+  color: #fff !important;
+  font-size: 8vw !important;
+  padding: 0.2em 0.5em;
+  border-radius: 0.2em;
+  font-family: Arial, sans-serif !important;
+  box-shadow: none !important;
+  text-shadow: none !important;
+}
+
+
+
 
 #countdown {
   position: fixed;
@@ -43,10 +101,9 @@ body {
   transition: opacity 0.3s;
 }
 
-#ring-counter {
+.ring-counter {
   position: fixed;
   top: 36px;
-  right: 36px;
   width: 160px;
   height: 160px;
   background: #e0e0e0;
@@ -63,9 +120,15 @@ body {
   align-items: center;
   justify-content: center;
   border: none;
-  overflow: hidden;
+  user-select: none;
 }
-#ring-counter #ring-count {
+.ring-counter.left {
+  left: 36px;
+}
+.ring-counter.right {
+  right: 36px;
+}
+.ring-counter #ring-count {
   font-weight: bold;
   color: #000;
   font-size: 2.1em;

@@ -7,9 +7,136 @@
 // ===============================
 let trackCurve; // Track spline
 let keys = {};
-let scene, camera, renderer, kart;
-let rings = [], ringCount = 0;
-let currentMap = 0;
+let scene, camera, renderer;
+let players = [];
+let rings = [], currentMap = 0;
+
+// Player class
+class Player {
+  constructor(startPos, startDir, controls) {
+    this.kart = createKart();
+    this.pos = startPos.clone();
+    this.dir = startDir;
+    this.speed = 0;
+    this.steerAngle = 0;
+    this.ringCount = 0;
+    this.controls = controls; // { left, right, up, down }
+    scene.add(this.kart);
+    console.log('Kart added to scene for player:', controls, this.kart);
+  }
+}
+
+// Function to create a banana kart
+function createKart() {
+  const kart = new THREE.Group();
+  const scale = 1.3;
+  // Banana body (copy from original code)
+  const bananaStart = new THREE.Vector3(0, 0.3 * scale, -1.35 * scale);
+  const bananaEnd = new THREE.Vector3(0, 0.7 * scale, 1.35 * scale);
+  const bananaControl1 = new THREE.Vector3(0, -0.5 * scale, -0.7 * scale);
+  const bananaControl2 = new THREE.Vector3(0, -0.5 * scale, 0.7 * scale);
+  const bananaCurve = new THREE.CubicBezierCurve3(bananaStart, bananaControl1, bananaControl2, bananaEnd);
+  const bananaSegments = 120;
+  const bananaGeometry = new THREE.TubeGeometry(bananaCurve, bananaSegments, 0.27 * scale, 64, false);
+  const pos = bananaGeometry.attributes.position;
+  const colors = [];
+  for (let i = 0; i < pos.count; i++) {
+    const color = new THREE.Color(0xffe066);
+    colors.push(color.r, color.g, color.b);
+  }
+  bananaGeometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+  for (let i = 0; i < pos.count; ++i) {
+    const z = pos.getZ(i);
+    const t = (z + 1.35 * scale) / (2.7 * scale);
+    let radiusScale = 1.0;
+    if (t < 0.09) radiusScale = Math.max(0.18, 0.38 + 0.54 * t/0.09);
+    else if (t > 0.93) radiusScale = Math.max(0.18, 0.18 + 0.32 * (1-t)/0.07);
+    pos.setY(i, pos.getY(i) * radiusScale);
+    pos.setX(i, pos.getX(i) * radiusScale);
+  }
+  const bananaMaterial = new THREE.MeshPhongMaterial({ vertexColors: true, shininess: 28, specular: 0x665500, side: THREE.DoubleSide });
+  const bananaBody = new THREE.Mesh(bananaGeometry, bananaMaterial);
+  bananaBody.position.set(0, 0.62 * scale, 0);
+  kart.add(bananaBody);
+  // Brown cap (back)
+  const capMaterial = new THREE.MeshPhongMaterial({ color: 0x5c3810 });
+  const startPt = bananaCurve.getPoint(0);
+  const backSphere = new THREE.Mesh(new THREE.SphereGeometry(0.09 * scale, 18, 12), capMaterial);
+  backSphere.position.copy(startPt);
+  bananaBody.add(backSphere);
+  // Handle (front)
+  const endPt = bananaCurve.getPoint(1);
+  const endTan = bananaCurve.getTangent(1);
+  const handleRadius = 0.09 * scale;
+  const handleLength = 0.43 * scale;
+  const handleGeo = new THREE.CylinderGeometry(handleRadius, handleRadius, handleLength, 20);
+  const handleMat = new THREE.MeshPhongMaterial({ color: 0xffe066 });
+  const handle = new THREE.Mesh(handleGeo, handleMat);
+  handle.position.copy(endPt.clone().add(endTan.clone().multiplyScalar(handleLength/2)));
+  handle.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0), endTan.clone().normalize());
+  bananaBody.add(handle);
+  // Chassis and wheels (same as original)
+  const chassisMat = new THREE.MeshPhongMaterial({ color: 0x111111, shininess: 80, specular: 0x222222 });
+  const wheelRadius = 0.32 * scale;
+  const axleY = wheelRadius;
+  const wheelX = 0.68 * scale;
+  const axleLen = 2 * wheelX;
+  const axleRadius = 0.09 * scale;
+  const axleGap = 0.4 * scale;
+  const shortAxleLen = wheelX - axleGap / 2;
+  // Front/rear axles
+  [[-axleGap/2-shortAxleLen/2, axleY, 0.68*scale], [axleGap/2+shortAxleLen/2, axleY, 0.68*scale],
+   [-axleGap/2-shortAxleLen/2, axleY, -0.68*scale], [axleGap/2+shortAxleLen/2, axleY, -0.68*scale]]
+    .forEach(([x,y,z]) => {
+      const axleGeo = new THREE.CylinderGeometry(axleRadius, axleRadius, shortAxleLen, 16);
+      const axle = new THREE.Mesh(axleGeo, chassisMat);
+      axle.position.set(x, y, z);
+      axle.rotation.z = Math.PI / 2;
+      kart.add(axle);
+    });
+  // Wheels
+  const wheelThickness = 0.18 * scale;
+  const wheelGeometry = new THREE.CylinderGeometry(wheelRadius, wheelRadius, wheelThickness, 18);
+  const wheelMaterial = new THREE.MeshPhongMaterial({ color: 0x222222 });
+  const tireMaterial = new THREE.MeshPhongMaterial({ color: 0x111111 });
+  const hubcapMaterial = new THREE.MeshPhongMaterial({ color: 0x888888 });
+  const wheelPositions = [
+    [-0.68 * scale, wheelRadius,  0.68 * scale],
+    [ 0.68 * scale, wheelRadius,  0.68 * scale],
+    [-0.68 * scale, wheelRadius, -0.68 * scale],
+    [ 0.68 * scale, wheelRadius, -0.68 * scale],
+  ];
+  wheelPositions.forEach(([x, y, z], idx) => {
+    const wheelGroup = new THREE.Group();
+    const wheel = new THREE.Mesh(wheelGeometry, wheelMaterial);
+    wheel.rotation.z = Math.PI / 2;
+    wheelGroup.add(wheel);
+    const tireDiscGeo = new THREE.CircleGeometry(wheelRadius, 32);
+    const tireDisc1 = new THREE.Mesh(tireDiscGeo, tireMaterial);
+    tireDisc1.position.set(0, wheelThickness/2 + 0.001, 0);
+    tireDisc1.rotation.z = Math.PI / 2;
+    wheelGroup.add(tireDisc1);
+    const tireDisc2 = new THREE.Mesh(tireDiscGeo, tireMaterial);
+    tireDisc2.position.set(0, -wheelThickness/2 - 0.001, 0);
+    tireDisc2.rotation.z = Math.PI / 2;
+    wheelGroup.add(tireDisc2);
+    const hubcapRadius = wheelRadius * 0.8;
+    const hubcapDiscGeo = new THREE.CircleGeometry(hubcapRadius, 24);
+    const hubcap1 = new THREE.Mesh(hubcapDiscGeo, hubcapMaterial);
+    hubcap1.position.set(0, wheelThickness/2 + 0.015, 0);
+    hubcap1.rotation.z = Math.PI / 2;
+    wheelGroup.add(hubcap1);
+    const hubcap2 = new THREE.Mesh(hubcapDiscGeo, hubcapMaterial);
+    hubcap2.position.set(0, -wheelThickness/2 - 0.015, 0);
+    hubcap2.rotation.z = Math.PI / 2;
+    wheelGroup.add(hubcap2);
+    wheelGroup.position.set(x, y, z);
+    kart.add(wheelGroup);
+  });
+  return kart;
+}
+
+
 let allowDrive = false;
 let gameRunning = false;
 let start, next;
@@ -27,6 +154,7 @@ const maxFwd = 0.32 * 2.4, maxRev = -0.08 * 2.4, accel = 0.0039, brake = 0.025, 
 
 // Track/scene constants
 const ellipseA = 320, ellipseB = 200, ellipseCount = 16;
+const roadWidth = 60; // Width of the road for player placement and rendering
 const groundRadius = ellipseA + 850;
 const maps = [
   { name: 'Circuit Plaza', asset: null },
@@ -49,15 +177,13 @@ while (container.firstChild) {
 scene = new THREE.Scene();
   scene.background = new THREE.Color(0x87ceeb); // Sky blue
 
-
-  camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-  camera.position.set(0, 5, -12);
-  camera.lookAt(0, 0, 0);
+  // Cameras for split screen
+  window.camera1 = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+  window.camera2 = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
 
   renderer = new THREE.WebGLRenderer({ antialias: true });
   renderer.setSize(window.innerWidth, window.innerHeight);
   document.getElementById('threejs-container').appendChild(renderer.domElement);
-
 
 
   // --- Lighting ---
@@ -85,6 +211,35 @@ function hillY(t) { return 0; }
   // No duplicate closing point!
   // --- Track curve ---
   trackCurve = new THREE.CatmullRomCurve3(loopPoints, true, 'catmullrom', 0.8);
+
+  // Instantiate two players at the same starting position  // Both players start near center, but offset left/right
+  start = trackCurve.getPointAt(0).clone();
+  const angle = Math.atan2(
+    trackCurve.getPointAt(0.01).x - start.x,
+    trackCurve.getPointAt(0.01).z - start.z
+  );
+
+  // Offset from center to halfway to each side
+  const leftOffset = -roadWidth / 4;
+  const rightOffset = roadWidth / 4;
+  // Calculate left/right positions in local track direction
+  const tangent = trackCurve.getTangentAt(0);
+  const left = start.clone().add(new THREE.Vector3(-tangent.z, 0, tangent.x).normalize().multiplyScalar(roadWidth/4));
+  const right = start.clone().add(new THREE.Vector3(tangent.z, 0, -tangent.x).normalize().multiplyScalar(roadWidth/4));
+  players = [
+    new Player(left, angle, { left: 'KeyA', right: 'KeyD', up: 'KeyW', down: 'KeyS' }),
+    new Player(right, angle, { left: 'ArrowLeft', right: 'ArrowRight', up: 'ArrowUp', down: 'ArrowDown' })
+  ];
+  // Ensure karts are visibly positioned at the start
+  players.forEach((player, idx) => {
+    player.kart.position.copy(player.pos);
+    player.kart.rotation.y = player.dir;
+    console.log('Player', idx, 'kart position at start:', player.kart.position, 'rotation:', player.kart.rotation.y);
+  });
+  // Ensure cameras are looking at the start
+  updateCameraForPlayer(window.camera1, players[0]);
+  updateCameraForPlayer(window.camera2, players[1]);
+
 
   // --- Clouds in the sky ---
   for (let i = 0; i < 18; ++i) {
@@ -161,11 +316,11 @@ function hillY(t) { return 0; }
     scene.add(bush);
   }
   // --- Road mesh ---
-  const roadWidth = 12;
+
   const roadMaterial = new THREE.MeshPhongMaterial({ color: 0x888888, side: THREE.DoubleSide }); // Medium gray
   const segmentCount = loopPoints.length * 12;
-  const positions = [];
-  const uvs = [];
+  let positions = [];
+  let uvs = [];
 
   // Define start and next ONCE for all uses
   start = trackCurve.getPointAt(0);
@@ -241,193 +396,26 @@ function hillY(t) { return 0; }
 
 
   // ===============================
-  // KART (MANGO CAR) CONSTRUCTION
-kart = new THREE.Group();
-const scale = 1.3;
-
-// Define a quadratic Bezier curve for the banana path (curved upward)
-// Both ends high, middle low
-const bananaStart = new THREE.Vector3(0, 0.3 * scale, -1.35 * scale);
-const bananaEnd = new THREE.Vector3(0, 0.7 * scale, 1.35 * scale);
-const bananaControl1 = new THREE.Vector3(0, -0.5 * scale, -0.7 * scale);
-const bananaControl2 = new THREE.Vector3(0, -0.5 * scale, 0.7 * scale);
-const bananaCurve = new THREE.CubicBezierCurve3(bananaStart, bananaControl1, bananaControl2, bananaEnd);
-
-// TubeGeometry with fixed radius for debug
-const bananaSegments = 120;
-const bananaGeometry = new THREE.TubeGeometry(bananaCurve, bananaSegments, 0.27 * scale, 64, false); // smoother, more segments
-
-// Color the banana: all yellow
-const pos = bananaGeometry.attributes.position;
-const colors = [];
-for (let i = 0; i < pos.count; i++) {
-  // All yellow, no dark brown tips
-  const color = new THREE.Color(0xffe066);
-  colors.push(color.r, color.g, color.b);
-}
-bananaGeometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
-
-// Taper banana by scaling vertices along the curve
-for (let i = 0; i < pos.count; ++i) {
-  // t from 0 (back) to 1 (front)
-  const z = pos.getZ(i);
-  const t = (z + 1.35 * scale) / (2.7 * scale);
-  // Taper: thick at back, point at front
-  let radiusScale = 1.0;
-  if (t < 0.09) radiusScale = Math.max(0.18, 0.38 + 0.54 * t/0.09); // back tip, clamp min
-  else if (t > 0.93) radiusScale = Math.max(0.18, 0.18 + 0.32 * (1-t)/0.07); // front tip, clamp min
-  pos.setY(i, pos.getY(i) * radiusScale);
-  pos.setX(i, pos.getX(i) * radiusScale);
-}
-
-const bananaMaterial = new THREE.MeshPhongMaterial({ vertexColors: true, shininess: 28, specular: 0x665500, side: THREE.DoubleSide });
-const bananaBody = new THREE.Mesh(bananaGeometry, bananaMaterial);
-bananaBody.position.set(0, 0.62 * scale, 0);
-// No rotation needed; curve faces up
-kart.add(bananaBody);
-
-// Add brown caps to both ends of the banana
-const capSegments = 32;
-const capRadiusBack = 0.21 * scale; // even larger for back tip
-const capRadiusFront = 0.22 * scale; // keep front as before
-const capMaterial = new THREE.MeshPhongMaterial({ color: 0x5c3810 }); // brown
-
-// Brown sphere at back tip (no cap)
-const startPt = bananaCurve.getPoint(0);
-const backSphere = new THREE.Mesh(
-  new THREE.SphereGeometry(0.09 * scale, 18, 12),
-  capMaterial
-);
-backSphere.position.copy(startPt);
-bananaBody.add(backSphere);
-
-// (Front cap removed as requested)
-const endPt = bananaCurve.getPoint(1);
-const endTan = bananaCurve.getTangent(1);
-
-// Add banana handle at front (short brown cylinder)
-const handleRadius = 0.09 * scale;
-const handleLength = 0.43 * scale;
-const handleGeo = new THREE.CylinderGeometry(handleRadius, handleRadius, handleLength, 20);
-const handleMat = new THREE.MeshPhongMaterial({ color: 0xffe066 });
-const handle = new THREE.Mesh(handleGeo, handleMat);
-handle.position.copy(endPt.clone().add(endTan.clone().multiplyScalar(handleLength/2)));
-// Orient handle along the tangent
-handle.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0), endTan.clone().normalize());
-bananaBody.add(handle);
-
-  // Only left-to-right axles (no front-to-back chassis bar)
-const chassisMat = new THREE.MeshPhongMaterial({ color: 0x111111, shininess: 80, specular: 0x222222 });
-  const wheelRadius = 0.32 * scale;
-  const axleY = wheelRadius; // Axle at wheel center
-  const wheelX = 0.68 * scale;
-  const axleLen = 2 * wheelX;
-  const axleRadius = 0.09 * scale;
-  // Split axles: left and right segments, leaving a gap under the banana
-  const axleGap = 0.4 * scale; // width of gap under the banana (narrower)
-  const shortAxleLen = wheelX - axleGap / 2;
-  // Front left axle segment
-  const frontAxleLeftGeo = new THREE.CylinderGeometry(axleRadius, axleRadius, shortAxleLen, 16);
-  const frontAxleLeft = new THREE.Mesh(frontAxleLeftGeo, chassisMat);
-  frontAxleLeft.position.set(-axleGap/2 - shortAxleLen/2, axleY, 0.68 * scale);
-  frontAxleLeft.rotation.z = Math.PI / 2;
-  kart.add(frontAxleLeft);
-  // Front right axle segment
-  const frontAxleRightGeo = new THREE.CylinderGeometry(axleRadius, axleRadius, shortAxleLen, 16);
-  const frontAxleRight = new THREE.Mesh(frontAxleRightGeo, chassisMat);
-  frontAxleRight.position.set(axleGap/2 + shortAxleLen/2, axleY, 0.68 * scale);
-  frontAxleRight.rotation.z = Math.PI / 2;
-  kart.add(frontAxleRight);
-  // Rear left axle segment
-  const rearAxleLeftGeo = new THREE.CylinderGeometry(axleRadius, axleRadius, shortAxleLen, 16);
-  const rearAxleLeft = new THREE.Mesh(rearAxleLeftGeo, chassisMat);
-  rearAxleLeft.position.set(-axleGap/2 - shortAxleLen/2, axleY, -0.68 * scale);
-  rearAxleLeft.rotation.z = Math.PI / 2;
-  kart.add(rearAxleLeft);
-  // Rear right axle segment
-  const rearAxleRightGeo = new THREE.CylinderGeometry(axleRadius, axleRadius, shortAxleLen, 16);
-  const rearAxleRight = new THREE.Mesh(rearAxleRightGeo, chassisMat);
-  rearAxleRight.position.set(axleGap/2 + shortAxleLen/2, axleY, -0.68 * scale);
-  rearAxleRight.rotation.z = Math.PI / 2;
-  kart.add(rearAxleRight);
-
-
-  // Wheels
-  const wheelThickness = 0.18 * scale;
-  const wheelGeometry = new THREE.CylinderGeometry(wheelRadius, wheelRadius, wheelThickness, 18);
-  const wheelMaterial = new THREE.MeshPhongMaterial({ color: 0x222222 });
-  const tireMaterial = new THREE.MeshPhongMaterial({ color: 0x111111 });
-  const hubcapMaterial = new THREE.MeshPhongMaterial({ color: 0x888888 });
-  const wheelPositions = [
-    [-0.68 * scale, wheelRadius,  0.68 * scale], // front left
-    [ 0.68 * scale, wheelRadius,  0.68 * scale], // front right
-    [-0.68 * scale, wheelRadius, -0.68 * scale], // rear left
-    [ 0.68 * scale, wheelRadius, -0.68 * scale], // rear right
-  ];
-  window.kartFrontLeft = null;
-  window.kartFrontRight = null;
-  wheelPositions.forEach(([x, y, z], idx) => {
-    const wheelGroup = new THREE.Group();
-    // Main wheel (flat faces perpendicular to Z/car direction)
-const wheel = new THREE.Mesh(wheelGeometry, wheelMaterial);
-    wheel.rotation.z = Math.PI / 2;
-    wheelGroup.add(wheel);
-    // Outer black tire ring (disc)
-const tireDiscGeo = new THREE.CircleGeometry(wheelRadius, 32);
-    const tireDisc1 = new THREE.Mesh(tireDiscGeo, tireMaterial);
-    tireDisc1.position.set(0, wheelThickness/2 + 0.001, 0);
-    tireDisc1.rotation.z = Math.PI / 2;
-    wheelGroup.add(tireDisc1);
-    const tireDisc2 = new THREE.Mesh(tireDiscGeo, tireMaterial);
-    tireDisc2.position.set(0, -wheelThickness/2 - 0.001, 0);
-    tireDisc2.rotation.z = Math.PI / 2;
-    wheelGroup.add(tireDisc2);
-    // Inner gray hubcap (smaller disc)
-const hubcapRadius = wheelRadius * 0.8;
-    const hubcapDiscGeo = new THREE.CircleGeometry(hubcapRadius, 24);
-    const hubcap1 = new THREE.Mesh(hubcapDiscGeo, hubcapMaterial);
-    hubcap1.position.set(0, wheelThickness/2 + 0.015, 0);
-    hubcap1.rotation.z = Math.PI / 2;
-    wheelGroup.add(hubcap1);
-    const hubcap2 = new THREE.Mesh(hubcapDiscGeo, hubcapMaterial);
-    hubcap2.position.set(0, -wheelThickness/2 - 0.015, 0);
-    hubcap2.rotation.z = Math.PI / 2;
-    wheelGroup.add(hubcap2);
-    // Position wheel group
-    wheelGroup.position.set(x, y, z);
-    kart.add(wheelGroup);
-    if (idx === 0) window.kartFrontLeft = wheelGroup;
-    if (idx === 1) window.kartFrontRight = wheelGroup;
-  });
-
-  scene.add(kart);
-
-  // Place car at the start of the track
-  kart.position.set(start.x, 0.3 * scale, start.z);
-  kart.position.set(start.x, 0.3, start.z);
-  // Set kartAngle to match the tangent of the road at the start (car forward = +Z)
-  const kartAngle = Math.atan2(next.x - start.x, next.z - start.z); // +Z is forward
-  kart.rotation.y = kartAngle;
-
-  // (Removed old checkered start/finish line
   // --- Banner Flag Above Start/Finish ---
   const poleHeight = 7, poleOffset = roadWidth * 0.9;
   const poleGeo = new THREE.CylinderGeometry(0.13, 0.13, poleHeight, 16);
   const poleMat = new THREE.MeshPhongMaterial({ color: 0x222222 });
+  // Use the same angle as the player start direction
+  const angle1 = Math.atan2(next.x - start.x, next.z - start.z);
   // Left pole
   const poleL = new THREE.Mesh(poleGeo, poleMat);
   poleL.position.set(
-    start.x - Math.cos(kartAngle) * poleOffset,
+    start.x - Math.cos(angle1) * poleOffset,
     poleHeight / 2,
-    start.z + Math.sin(kartAngle) * poleOffset
+    start.z + Math.sin(angle1) * poleOffset
   );
   scene.add(poleL);
   // Right pole
   const poleR = new THREE.Mesh(poleGeo, poleMat);
   poleR.position.set(
-    start.x + Math.cos(kartAngle) * poleOffset,
+    start.x + Math.cos(angle1) * poleOffset,
     poleHeight / 2,
-    start.z - Math.sin(kartAngle) * poleOffset
+    start.z - Math.sin(angle1) * poleOffset
   );
   scene.add(poleR);
   // Banner
@@ -464,7 +452,7 @@ const hubcapRadius = wheelRadius * 0.8;
   const midY = poleHeight - bannerHeight/2 + 0.2;
   const midZ = (poleLeftPos.z + poleRightPos.z) / 2;
   banner.position.set(midX, midY, midZ);
-  banner.rotation.y = kartAngle + Math.PI; // flip so text faces player
+  banner.rotation.y = angle1 + Math.PI; // flip so text faces player
   scene.add(banner);
 
   // --- TREES ---
@@ -662,46 +650,109 @@ function updateMango() {
  * Main animation loop: updates game state and renders the scene.
  */
 function animate() {
-  updateMango();
-  // Camera follows behind and above the car
-  camera.position.set(
-    mangoPos.x - Math.sin(mangoDir) * 12,
-    mangoPos.y + 5,
-    mangoPos.z - Math.cos(mangoDir) * 12
-  );
-  camera.lookAt(
-    mangoPos.x + Math.sin(mangoDir) * 6,
-    mangoPos.y + 2.2,
-    mangoPos.z + Math.cos(mangoDir) * 6
-  );
-  // Animate golden rings
+  console.log('Rendering frame');
+  // Update both players (movement only if allowed)
+  players.forEach((player, idx) => {
+    updatePlayer(player); // updatePlayer already checks allowDrive for movement
+  });
+  // Animate golden rings and handle collision for both players
   if (Array.isArray(rings)) {
     for (let i = rings.length - 1; i >= 0; --i) {
       const ring = rings[i];
       ring.rotation.y -= 0.015;
-      // Collision check: treat ring as a sphere (major + tube radius)
-      const ringOuterRadius = 2.2 + 0.35; // match geometry values
-      if (kart) {
-        const dx = ring.position.x - kart.position.x;
-        const dz = ring.position.z - kart.position.z;
+      let collected = false;
+      players.forEach((player, idx) => {
+        const dx = ring.position.x - player.kart.position.x;
+        const dz = ring.position.z - player.kart.position.z;
         const horizDist = Math.sqrt(dx * dx + dz * dz);
-        if (horizDist < ringOuterRadius) {
-          // Sparkle effect
+        const ringOuterRadius = 2.2 + 0.35;
+        if (horizDist < ringOuterRadius && !collected) {
           sparkleAt(ring.position);
           scene.remove(ring);
           rings.splice(i, 1);
-          ringCount++;
-  
-          const counterElem = document.getElementById('ring-count');
-          if (counterElem) counterElem.textContent = ringCount;
-  
+          player.ringCount++;
+          // Update the correct counter
+          const counterElem = document.getElementById(idx === 0 ? 'ring-count-1' : 'ring-count-2');
+          if (counterElem) counterElem.textContent = player.ringCount;
+          collected = true;
         }
-      }
+      });
     }
   }
-  renderer.render(scene, camera);
+  // Split-screen render
+  renderer.setScissorTest(true);
+  // Left (Player 1)
+  renderer.setViewport(0, 0, window.innerWidth/2, window.innerHeight);
+  renderer.setScissor(0, 0, window.innerWidth/2, window.innerHeight);
+  updateCameraForPlayer(window.camera1, players[0]);
+  renderer.render(scene, window.camera1);
+  // Right (Player 2)
+  renderer.setViewport(window.innerWidth/2, 0, window.innerWidth/2, window.innerHeight);
+  renderer.setScissor(window.innerWidth/2, 0, window.innerWidth/2, window.innerHeight);
+  updateCameraForPlayer(window.camera2, players[1]);
+  renderer.render(scene, window.camera2);
+  renderer.setScissorTest(false);
   requestAnimationFrame(animate);
 }
+
+function updatePlayer(player) {
+  if (!allowDrive) return;
+  // Controls
+  const controls = player.controls;
+  if (keys[controls.left]) player.steerAngle += steerSpeed;
+  if (keys[controls.right]) player.steerAngle -= steerSpeed;
+  player.steerAngle = Math.max(-maxSteer, Math.min(maxSteer, player.steerAngle));
+  if (!(keys[controls.left] || keys[controls.right])) {
+    if (player.steerAngle > 0) player.steerAngle = Math.max(0, player.steerAngle - steerFriction);
+    else if (player.steerAngle < 0) player.steerAngle = Math.min(0, player.steerAngle + steerFriction);
+  }
+  // Acceleration/brake
+  if (keys[controls.up]) player.speed += accel;
+  if (keys[controls.down]) player.speed -= brake;
+  // Clamp speed
+  player.speed = Math.max(maxRev, Math.min(maxFwd, player.speed));
+  // Friction
+  if (!(keys[controls.up] || keys[controls.down])) {
+    if (player.speed > 0) player.speed = Math.max(0, player.speed - friction);
+    else if (player.speed < 0) player.speed = Math.min(0, player.speed + friction);
+  }
+  // Move along track
+  const moveDist = player.speed;
+  // Find closest point on track
+  let minDist = Infinity, bestT = 0;
+  for (let t = 0; t < 1; t += 0.002) {
+    const pt = trackCurve.getPointAt(t);
+    const dx = pt.x - player.pos.x;
+    const dz = pt.z - player.pos.z;
+    let d = dx*dx + dz*dz;
+    if (d < minDist) { minDist = d; bestT = t; }
+  }
+  let roadPt = trackCurve.getPointAt(bestT);
+  if (!roadPt) return;
+  // Move forward/backward
+  const tangent = trackCurve.getTangentAt(bestT);
+  player.dir += player.steerAngle;
+  player.pos.x += Math.sin(player.dir) * moveDist;
+  player.pos.z += Math.cos(player.dir) * moveDist;
+  player.pos.y = roadPt.y + 0.3;
+  // Update kart position
+  player.kart.position.copy(player.pos);
+  player.kart.rotation.y = player.dir;
+}
+
+function updateCameraForPlayer(cam, player) {
+  cam.position.set(
+    player.pos.x - Math.sin(player.dir) * 12,
+    player.pos.y + 5,
+    player.pos.z - Math.cos(player.dir) * 12
+  );
+  cam.lookAt(
+    player.pos.x + Math.sin(player.dir) * 6,
+    player.pos.y + 2.2,
+    player.pos.z + Math.cos(player.dir) * 6
+  );
+}
+
 
 // Simple sparkle effect: spawn a few quick particles
 /**
@@ -749,9 +800,37 @@ function startCountdown() {
   const countdownElem = document.getElementById('countdown');
   let count = 3;
   function show(val) {
-    countdownElem.textContent = val;
+    countdownElem.innerHTML = '<span>' + val + '</span>';
+    let span = countdownElem.querySelector('span');
+    if (span) {
+      span.style.background = '';
+      span.style.backgroundColor = '';
+    }
+    // Ensure overlay is visible
+    countdownElem.style.display = 'flex';
+    countdownElem.style.opacity = 1;
+    countdownElem.style.visibility = 'visible';
+    console.log('CountdownElem after set (innerHTML):', countdownElem, countdownElem.innerHTML);
+    countdownElem.style.display = 'flex';
+    countdownElem.style.opacity = 1;
+    // For debugging, force visibility
+    countdownElem.style.visibility = 'visible';
+    console.log('Countdown show:', val);
+    countdownElem.style.background = 'rgba(0,0,0,0.2)'; // Debug: see overlay area
     countdownElem.style.opacity = 1;
     countdownElem.style.display = 'flex';
+    countdownElem.style.position = 'absolute';
+    countdownElem.style.top = '0';
+    countdownElem.style.left = '0';
+    countdownElem.style.width = '100vw';
+    countdownElem.style.height = '100vh';
+    countdownElem.style.justifyContent = 'center';
+    countdownElem.style.alignItems = 'center';
+    countdownElem.style.fontSize = '7vw';
+    countdownElem.style.color = '#fff';
+    countdownElem.style.textShadow = '0 0 20px #000, 0 0 40px #000';
+    countdownElem.style.pointerEvents = 'none';
+    countdownElem.style.background = 'transparent';
   }
   function hide() {
     countdownElem.style.opacity = 0;
@@ -788,9 +867,11 @@ window.addEventListener('DOMContentLoaded', () => {
 });
 // Responsive resize
 window.addEventListener('resize', () => {
-  if (renderer && camera) {
-    camera.aspect = window.innerWidth / window.innerHeight;
-    camera.updateProjectionMatrix();
+  if (renderer && window.camera1 && window.camera2) {
+    window.camera1.aspect = window.innerWidth / window.innerHeight;
+    window.camera2.aspect = window.innerWidth / window.innerHeight;
+    window.camera1.updateProjectionMatrix();
+    window.camera2.updateProjectionMatrix();
     renderer.setSize(window.innerWidth, window.innerHeight);
   }
 });
