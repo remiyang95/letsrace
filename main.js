@@ -5,6 +5,26 @@
 // ===============================
 // GLOBALS & GAME STATE
 // ===============================
+
+// Helper: check if (x, z) is on the road
+function isPointOnRoad(x, z, roadWidth) {
+  let onRoad = false;
+  for (let t = 0; t <= 1; t += 0.01) {
+    const pt = trackCurve.getPointAt(t);
+    const tangent = trackCurve.getTangentAt(t);
+    // normal in XZ plane
+    const normal = new THREE.Vector3(-tangent.z, 0, tangent.x).normalize();
+    // Vector from center to (x, z)
+    const v = new THREE.Vector3(x - pt.x, 0, z - pt.z);
+    // Project v onto normal
+    const d = v.dot(normal);
+    if (Math.abs(d) < roadWidth/2) {
+      onRoad = true;
+      break;
+    }
+  }
+  return onRoad;
+}
 let trackCurve; // Track spline
 let keys = {};
 let scene, camera, renderer;
@@ -31,10 +51,11 @@ function createKart() {
   const kart = new THREE.Group();
   const scale = 1.3;
   // Banana body (copy from original code)
-  const bananaStart = new THREE.Vector3(0, 0.3 * scale, -1.35 * scale);
-  const bananaEnd = new THREE.Vector3(0, 0.7 * scale, 1.35 * scale);
-  const bananaControl1 = new THREE.Vector3(0, -0.5 * scale, -0.7 * scale);
-  const bananaControl2 = new THREE.Vector3(0, -0.5 * scale, 0.7 * scale);
+  const bananaStart = new THREE.Vector3(0, 0.7 * scale, -1.35 * scale); // back, up
+  const bananaEnd = new THREE.Vector3(0, 0.7 * scale, 1.35 * scale);   // front, up
+  // Smile: both control points up, but the midpoint dips down
+  const bananaControl1 = new THREE.Vector3(0, -0.6 * scale, -0.7 * scale); // pulls curve down in the middle
+  const bananaControl2 = new THREE.Vector3(0, -0.6 * scale, 0.7 * scale);  // pulls curve down in the middle
   const bananaCurve = new THREE.CubicBezierCurve3(bananaStart, bananaControl1, bananaControl2, bananaEnd);
   const bananaSegments = 120;
   const bananaGeometry = new THREE.TubeGeometry(bananaCurve, bananaSegments, 0.27 * scale, 64, false);
@@ -64,16 +85,21 @@ function createKart() {
   const backSphere = new THREE.Mesh(new THREE.SphereGeometry(0.09 * scale, 18, 12), capMaterial);
   backSphere.position.copy(startPt);
   bananaBody.add(backSphere);
-  // Handle (front)
+  // Yellow cap (front)
+  const frontCapMaterial = new THREE.MeshPhongMaterial({ color: 0xffe066 });
   const endPt = bananaCurve.getPoint(1);
+  const frontSphere = new THREE.Mesh(new THREE.SphereGeometry(0.09 * scale, 18, 12), frontCapMaterial);
+  frontSphere.position.copy(endPt);
+  bananaBody.add(frontSphere);
+  // Handle (front)
   const endTan = bananaCurve.getTangent(1);
   const handleRadius = 0.09 * scale;
-  const handleLength = 0.43 * scale;
+  const handleLength = 0.43 * 1.5 * scale; // increased by 50%
   const handleGeo = new THREE.CylinderGeometry(handleRadius, handleRadius, handleLength, 20);
   const handleMat = new THREE.MeshPhongMaterial({ color: 0xffe066 });
   const handle = new THREE.Mesh(handleGeo, handleMat);
   handle.position.copy(endPt.clone().add(endTan.clone().multiplyScalar(handleLength/2)));
-  handle.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0), endTan.clone().normalize());
+  handle.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0), endTan.clone().normalize()); // follow curve tangent
   bananaBody.add(handle);
   // Chassis and wheels (same as original)
   const chassisMat = new THREE.MeshPhongMaterial({ color: 0x111111, shininess: 80, specular: 0x222222 });
@@ -154,7 +180,7 @@ const maxFwd = 0.32 * 2.4, maxRev = -0.08 * 2.4, accel = 0.0039, brake = 0.025, 
 
 // Track/scene constants
 const ellipseA = 320, ellipseB = 200, ellipseCount = 16;
-const roadWidth = 60; // Width of the road for player placement and rendering
+const roadWidth = 12; // Width of the road for player placement and rendering (now 50% more narrow)
 const groundRadius = ellipseA + 850;
 const maps = [
   { name: 'Circuit Plaza', asset: null },
@@ -224,11 +250,16 @@ function hillY(t) { return 0; }
   const rightOffset = roadWidth / 4;
   // Calculate left/right positions in local track direction
   const tangent = trackCurve.getTangentAt(0);
-  const left = start.clone().add(new THREE.Vector3(-tangent.z, 0, tangent.x).normalize().multiplyScalar(roadWidth/4));
-  const right = start.clone().add(new THREE.Vector3(tangent.z, 0, -tangent.x).normalize().multiplyScalar(roadWidth/4));
+  // Compute left direction as cross(up, tangent)
+  const up = new THREE.Vector3(0,1,0);
+  const leftDir = new THREE.Vector3().crossVectors(up, tangent).normalize();
+  const offset = roadWidth / 4;
+  const left = start.clone().add(leftDir.clone().multiplyScalar(offset));
+  const right = start.clone().add(leftDir.clone().multiplyScalar(-offset));
+  // Player 1 (WASD) is always on the left, Player 2 (arrows) is always on the right
   players = [
-    new Player(left, angle, { left: 'KeyA', right: 'KeyD', up: 'KeyW', down: 'KeyS' }),
-    new Player(right, angle, { left: 'ArrowLeft', right: 'ArrowRight', up: 'ArrowUp', down: 'ArrowDown' })
+    new Player(left, angle, { left: 'KeyA', right: 'KeyD', up: 'KeyW', down: 'KeyS' }), // Player 1 (left)
+    new Player(right, angle, { left: 'ArrowLeft', right: 'ArrowRight', up: 'ArrowUp', down: 'ArrowDown' }) // Player 2 (right)
   ];
   // Ensure karts are visibly positioned at the start
   players.forEach((player, idx) => {
@@ -252,6 +283,11 @@ function hillY(t) { return 0; }
       const sphGeo = new THREE.SphereGeometry(12 + Math.random()*8, 12, 12);
       const sphMat = new THREE.MeshPhongMaterial({ color: 0xffffff, flatShading: true });
       const sph = new THREE.Mesh(sphGeo, sphMat);
+      // Scale to wide ellipse
+      const sx = 1.7 + Math.random()*0.5;
+      const sy = 0.7 + Math.random()*0.4;
+      const sz = 1.3 + Math.random()*0.4;
+      sph.scale.set(sx, sy, sz);
       sph.position.set(cx + (Math.random()-0.5)*18, cy + (Math.random()-0.5)*6, cz + (Math.random()-0.5)*14);
       cloud.add(sph);
     }
@@ -277,47 +313,217 @@ function hillY(t) { return 0; }
     dirt.position.set(x, -0.009, z);
     scene.add(dirt);
   }
-  // Add random grass tufts (small, bright green)
-  for (let i = 0; i < 60; ++i) {
-    const angle = Math.random() * Math.PI * 2;
-    const radius = 200 + Math.random() * (groundRadius-250);
-    const x = Math.cos(angle) * radius;
-    const z = Math.sin(angle) * radius;
-    const tuftGeo = new THREE.SphereGeometry(3 + Math.random()*2, 8, 8);
-    const tuftMat = new THREE.MeshPhongMaterial({ color: 0x99e550 });
-    const tuft = new THREE.Mesh(tuftGeo, tuftMat);
-    tuft.position.set(x, 2.2 + Math.random()*2, z);
-    scene.add(tuft);
-  }
+
   for (let i = 0; i < 40; ++i) {
-    let angle, radius, x, z;
-    // Keep bushes well off the road: radius must be outside 1.35x road ellipse
-    while (true) {
-      angle = Math.random() * Math.PI * 2;
-      // Minimum bush distance from center: 1.35x road ellipse
-      const minA = ellipseA * 1.35;
-      const minB = ellipseB * 1.35;
-      radius = minA + Math.random() * (groundRadius - minA - 50);
+    let x, z, valid = false, tries = 0;
+    while (!valid && tries < 50) {
+      tries++;
+      const angle = Math.random() * Math.PI * 2;
+      const radius = ellipseA + 0.5 * roadWidth + 8 + Math.random() * 22; // just outside road
       x = Math.cos(angle) * radius;
       z = Math.sin(angle) * (radius * ellipseB / ellipseA);
-      // Check if inside forbidden ellipse (road area)
-      if ((x*x)/(minA*minA) + (z*z)/(minB*minB) > 1.0) break;
+      // Find closest point on track
+      let minDist = Infinity;
+      for (let t = 0; t <= 1; t += 0.01) {
+        const pt = trackCurve.getPointAt(t);
+        const dx = x - pt.x;
+        const dz = z - pt.z;
+        const dist = Math.sqrt(dx * dx + dz * dz);
+        if (dist < minDist) minDist = dist;
+      }
+      if (minDist > roadWidth/2 + 3 && minDist < roadWidth/2 + 30) valid = true;
     }
+    if (!valid) continue;
     const bush = new THREE.Group();
     for (let j = 0; j < 2 + Math.floor(Math.random()*2); ++j) {
       const bx = x + (Math.random()-0.5)*7; // tighter cluster
       const bz = z + (Math.random()-0.5)*7;
-      const bushGeo = new THREE.SphereGeometry(3 + Math.random()*1.5, 12, 12); // smaller
-      const bushMat = new THREE.MeshPhongMaterial({ color: 0x267a2a });
+      // Use dodecahedron, wider than tall, but always smaller than a tree
+      const bushGeo = new THREE.DodecahedronGeometry(1, 0);
+      const bushMat = new THREE.MeshPhongMaterial({ color: 0x888888, flatShading: true });
+      const width = 1.8 + Math.random()*1.2; // much smaller
+      const height = 1.0 + Math.random()*0.7; // much shorter
       const bushPart = new THREE.Mesh(bushGeo, bushMat);
-      bushPart.position.set(bx, 3 + Math.random()*1.2, bz);
+      bushPart.scale.set(width, height, width * (0.93 + Math.random()*0.13));
+      bushPart.position.set(bx, height/2, bz);
       bush.add(bushPart);
+      // Register bushPart as obstacle
+      if (!window.obstacles) window.obstacles = [];
+      window.obstacles.push({type: 'boulder', x: bx, z: bz, radius: width * 0.6});
     }
     scene.add(bush);
   }
+
+// --- Shared random off-road placement for trees and bushes ---
+function getRandomOffRoadPositions(count, mode='outside', roadMargin=2) {
+  // mode: 'inside' or 'outside'
+  const positions = [];
+  let attempts = 0;
+  const minX = -ellipseA - 100, maxX = ellipseA + 100;
+  const minZ = -ellipseB - 100, maxZ = ellipseB + 100;
+  while (positions.length < count && attempts < count * 100) {
+    attempts++;
+    const x = minX + Math.random() * (maxX - minX);
+    const z = minZ + Math.random() * (maxZ - minZ);
+    // Find closest point on track
+    let minDist = Infinity;
+    for (let t = 0; t <= 1; t += 0.01) {
+      const pt = trackCurve.getPointAt(t);
+      const dx = x - pt.x;
+      const dz = z - pt.z;
+      const dist = Math.sqrt(dx * dx + dz * dz);
+      if (dist < minDist) minDist = dist;
+    }
+    // Compute distance to ellipse center
+    const norm = (x/ellipseA)*(x/ellipseA) + (z/ellipseB)*(z/ellipseB);
+    // Inside: only if well inside inner edge
+    if (mode === 'inside') {
+      if (norm > 1 - ((roadWidth/2 + roadMargin)/ellipseA)) continue;
+      if (minDist < roadWidth/2 + roadMargin) continue;
+      positions.push([x, z]);
+    } else {
+      // Outside: only if well outside outer edge
+      if (norm < 1 + ((roadWidth/2 + roadMargin)/ellipseA)) continue;
+      if (minDist < roadWidth/2 + roadMargin) continue;
+      positions.push([x, z]);
+    }
+  }
+  return positions;
+}
+
+// Place boulders (outside)
+const bushPositionsOuter = getRandomOffRoadPositions(80, 'outside', 2);
+bushPositionsOuter.forEach(([x, z]) => {
+  const bush = new THREE.Group();
+  let accepted = false;
+  let tries = 0;
+  while (!accepted && tries < 30) {
+    tries++;
+    const width = 1.8 + Math.random()*1.2;
+    const height = 1.0 + Math.random()*0.7;
+    const margin = roadWidth + width*0.6;
+    // Find closest point on track
+    let minDist = Infinity;
+    for (let t = 0; t <= 1; t += 0.01) {
+      const pt = trackCurve.getPointAt(t);
+      const dx = x - pt.x;
+      const dz = z - pt.z;
+      const dist = Math.sqrt(dx * dx + dz * dz);
+      if (dist < minDist) minDist = dist;
+    }
+    if (!isPointOnRoad(x, z, roadWidth)) {
+      for (let j = 0; j < 2 + Math.floor(Math.random()*2); ++j) {
+        const bx = x + (Math.random()-0.5)*7;
+        const bz = z + (Math.random()-0.5)*7;
+        const bushGeo = new THREE.DodecahedronGeometry(1, 0);
+        const bushMat = new THREE.MeshPhongMaterial({ color: 0x888888, flatShading: true });
+        const bushPart = new THREE.Mesh(bushGeo, bushMat);
+        bushPart.scale.set(width, height, width * (0.93 + Math.random()*0.13));
+        bushPart.position.set(bx, height/2, bz);
+        bush.add(bushPart);
+        if (!window.obstacles) window.obstacles = [];
+        window.obstacles.push({type: 'boulder', x: bx, z: bz, radius: width * 0.6});
+      }
+      accepted = true;
+      scene.add(bush);
+    }
+  }
+});
+// Place boulders (inside)
+const bushPositionsInner = getRandomOffRoadPositions(30, 'inside', 2);
+bushPositionsInner.forEach(([x, z]) => {
+  const bush = new THREE.Group();
+  let accepted = false;
+  let tries = 0;
+  while (!accepted && tries < 30) {
+    tries++;
+    const width = 1.8 + Math.random()*1.2;
+    const height = 1.0 + Math.random()*0.7;
+    const margin = roadWidth + width*0.6;
+    // Find closest point on track
+    let minDist = Infinity;
+    for (let t = 0; t <= 1; t += 0.01) {
+      const pt = trackCurve.getPointAt(t);
+      const dx = x - pt.x;
+      const dz = z - pt.z;
+      const dist = Math.sqrt(dx * dx + dz * dz);
+      if (dist < minDist) minDist = dist;
+    }
+    if (!isPointOnRoad(x, z, roadWidth)) {
+      for (let j = 0; j < 2 + Math.floor(Math.random()*2); ++j) {
+        const bx = x + (Math.random()-0.5)*7;
+        const bz = z + (Math.random()-0.5)*7;
+        const bushGeo = new THREE.DodecahedronGeometry(1, 0);
+        const bushMat = new THREE.MeshPhongMaterial({ color: 0x888888, flatShading: true });
+        const bushPart = new THREE.Mesh(bushGeo, bushMat);
+        bushPart.scale.set(width, height, width * (0.93 + Math.random()*0.13));
+        bushPart.position.set(bx, height/2, bz);
+        bush.add(bushPart);
+        if (!window.obstacles) window.obstacles = [];
+        window.obstacles.push({type: 'boulder', x: bx, z: bz, radius: width * 0.6});
+      }
+      accepted = true;
+      scene.add(bush);
+    }
+  }
+});
+
+// Place trees (outside)
+const treePositionsOuter = getRandomOffRoadPositions(Math.floor(120 * 1.5), 'outside', 2);
+treePositionsOuter.forEach(([x, z]) => {
+  let accepted = false;
+  let tries = 0;
+  while (!accepted && tries < 30) {
+    tries++;
+    // Randomize tree scale
+    const scale = 1.7;
+    const leavesR = (0.9 + Math.random() * 0.7) * scale;
+    const margin = roadWidth + leavesR * 1.1;
+    // Find closest point on track
+    let minDist = Infinity;
+    for (let t = 0; t <= 1; t += 0.01) {
+      const pt = trackCurve.getPointAt(t);
+      const dx = x - pt.x;
+      const dz = z - pt.z;
+      const dist = Math.sqrt(dx * dx + dz * dz);
+      if (dist < minDist) minDist = dist;
+    }
+    if (!isPointOnRoad(x, z, roadWidth)) {
+      addTree(x, z, scale);
+      accepted = true;
+    }
+  }
+});
+// Place trees (inside)
+const treePositionsInner = getRandomOffRoadPositions(50, 'inside', 2);
+treePositionsInner.forEach(([x, z]) => {
+  let accepted = false;
+  let tries = 0;
+  while (!accepted && tries < 30) {
+    tries++;
+    // Randomize tree scale
+    const scale = 1.7;
+    const leavesR = (0.9 + Math.random() * 0.7) * scale;
+    const margin = roadWidth + leavesR * 1.1;
+    // Find closest point on track
+    let minDist = Infinity;
+    for (let t = 0; t <= 1; t += 0.01) {
+      const pt = trackCurve.getPointAt(t);
+      const dx = x - pt.x;
+      const dz = z - pt.z;
+      const dist = Math.sqrt(dx * dx + dz * dz);
+      if (dist < minDist) minDist = dist;
+    }
+    if (!isPointOnRoad(x, z, roadWidth)) {
+      addTree(x, z, scale);
+      accepted = true;
+    }
+  }
+});
+
   // --- Road mesh ---
 
-  const roadMaterial = new THREE.MeshPhongMaterial({ color: 0x888888, side: THREE.DoubleSide }); // Medium gray
+  const roadMaterial = new THREE.MeshPhongMaterial({ color: 0xd2b48c, side: THREE.DoubleSide }); // Light brown dirt
   const segmentCount = loopPoints.length * 12;
   let positions = [];
   let uvs = [];
@@ -353,47 +559,6 @@ function hillY(t) { return 0; }
   roadGeo.computeVertexNormals();
   const roadMesh = new THREE.Mesh(roadGeo, roadMaterial);
   scene.add(roadMesh);
-
-  // --- Center dashes (white and even shorter) ---
-  const dashCount = loopPoints.length * 6;
-  for (let i = 0; i < dashCount; ++i) {
-    const t = i / dashCount;
-    const p1 = trackCurve.getPointAt(t);
-    const p2 = trackCurve.getPointAt((t + 0.003) % 1); // even shorter dash
-    const dashLength = p1.distanceTo(p2);
-    const dashGeometry = new THREE.BoxGeometry(0.16, 0.07, dashLength);
-    const dashMaterial = new THREE.MeshPhongMaterial({ color: 0xffffff });
-    const dash = new THREE.Mesh(dashGeometry, dashMaterial);
-    dash.position.set((p1.x + p2.x) / 2, 0.04, (p1.z + p2.z) / 2);
-    dash.lookAt(p2.x, 0.04, p2.z);
-    scene.add(dash);
-  }
-
-  // --- Road white borders as smooth tubes ---
-  const borderRadius = 0.09;
-  // Sample points for left and right edge curves
-  const borderCurvePoints = 200;
-  const leftPoints = [], rightPoints = [];
-  for (let i = 0; i <= borderCurvePoints; ++i) {
-    const t = i / borderCurvePoints;
-    const center = trackCurve.getPointAt(t);
-    const nextPt = trackCurve.getPointAt((t + 0.001) % 1);
-    const tangent = new THREE.Vector3().subVectors(nextPt, center).normalize();
-    const normal = new THREE.Vector3(-tangent.z, 0, tangent.x).normalize();
-    leftPoints.push(center.clone().addScaledVector(normal, roadWidth));
-    rightPoints.push(center.clone().addScaledVector(normal, -roadWidth));
-  }
-  const leftCurve = new THREE.CatmullRomCurve3(leftPoints, true);
-  const rightCurve = new THREE.CatmullRomCurve3(rightPoints, true);
-  const tubeSegments = 400;
-  const leftTubeGeo = new THREE.TubeGeometry(leftCurve, tubeSegments, borderRadius, 8, true);
-  const rightTubeGeo = new THREE.TubeGeometry(rightCurve, tubeSegments, borderRadius, 8, true);
-  const borderMat = new THREE.MeshPhongMaterial({ color: 0xffffff });
-  const leftTube = new THREE.Mesh(leftTubeGeo, borderMat);
-  const rightTube = new THREE.Mesh(rightTubeGeo, borderMat);
-  scene.add(leftTube);
-  scene.add(rightTube);
-
 
   // ===============================
   // --- Banner Flag Above Start/Finish ---
@@ -434,11 +599,16 @@ function hillY(t) { return 0; }
     ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, w, h);
     ctx.strokeStyle = '#111'; ctx.lineWidth = 32;
     ctx.strokeRect(0, 0, w, h);
-    ctx.font = 'bold 260px sans-serif';
-    ctx.fillStyle = '#000';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText("LET'S RACE!", w/2, h/2);
+    // Draw checkerboard pattern
+    const squaresPerCol = 4;
+    const squareSize = h / squaresPerCol;
+    const squaresPerRow = Math.floor(w / squareSize);
+    for (let y = 0; y < squaresPerCol; ++y) {
+      for (let x = 0; x < squaresPerRow; ++x) {
+        ctx.fillStyle = (x + y) % 2 === 0 ? '#fff' : '#000';
+        ctx.fillRect(x * squareSize, y * squareSize, squareSize, squareSize);
+      }
+    }
     const texture = new THREE.CanvasTexture(canvas);
     texture.minFilter = THREE.LinearFilter;
     texture.magFilter = THREE.NearestFilter;
@@ -455,73 +625,102 @@ function hillY(t) { return 0; }
   banner.rotation.y = angle1 + Math.PI; // flip so text faces player
   scene.add(banner);
 
-  // --- TREES ---
-  function addTree(x, z, scale=1) {
-    // Randomize trunk and leaves
-    const trunkH = (1.5 + Math.random() * 1.7) * scale;
-    const trunkR = (0.22 + Math.random() * 0.22) * scale;
-    const trunkGeo = new THREE.CylinderGeometry(trunkR, trunkR * 1.15, trunkH, 8);
-    const trunkMat = new THREE.MeshPhongMaterial({ color: 0x8B5A2B });
-    const trunk = new THREE.Mesh(trunkGeo, trunkMat);
-    trunk.position.set(x, trunkH/2, z);
+  // --- Rainbow line on the road connecting the two poles ---
+  // Calculate the start and end points at ground level
+  const rainbowY = 0.13; // slightly above road
+  const rainbowStart = new THREE.Vector3(poleLeftPos.x, rainbowY, poleLeftPos.z);
+  const rainbowEnd = new THREE.Vector3(poleRightPos.x, rainbowY, poleRightPos.z);
+  const rainbowLength = rainbowStart.distanceTo(rainbowEnd);
+  const rainbowWidth = 0.5; // thickness of the line
 
-    // Randomly use sphere or cone leaves, vary size and color
-    const useCone = Math.random() < 0.5;
-    const leavesH = (1.2 + Math.random() * 1.6) * scale;
-    const leavesR = (0.8 + Math.random() * 0.8) * scale;
-    const leafColor = Math.random() < 0.22 ? 0x5fa03c : (Math.random() < 0.5 ? 0x228B22 : 0x2e8b57);
-    let leaves;
-    if (useCone) {
-      const leavesGeo = new THREE.ConeGeometry(leavesR, leavesH, 10);
-      const leavesMat = new THREE.MeshPhongMaterial({ color: leafColor });
-      leaves = new THREE.Mesh(leavesGeo, leavesMat);
-      leaves.position.set(x, trunkH + leavesH/2 - 0.18*scale, z);
-    } else {
-      const leavesGeo = new THREE.SphereGeometry(leavesR, 12, 12);
-      const leavesMat = new THREE.MeshPhongMaterial({ color: leafColor });
-      leaves = new THREE.Mesh(leavesGeo, leavesMat);
-      leaves.position.set(x, trunkH + leavesR*0.93, z);
-    }
-    scene.add(trunk);
-    scene.add(leaves);
+  // Create a canvas texture with a horizontal rainbow gradient
+  const rainbowCanvas = document.createElement('canvas');
+  rainbowCanvas.width = 512; rainbowCanvas.height = 16;
+  const rainbowCtx = rainbowCanvas.getContext('2d');
+  const grad = rainbowCtx.createLinearGradient(0, 0, rainbowCanvas.width, 0);
+  grad.addColorStop(0.00, '#ff0000'); // red
+  grad.addColorStop(0.17, '#ff9900'); // orange
+  grad.addColorStop(0.33, '#ffff00'); // yellow
+  grad.addColorStop(0.50, '#00ff00'); // green
+  grad.addColorStop(0.67, '#00bfff'); // blue
+  grad.addColorStop(0.83, '#8f00ff'); // purple
+  grad.addColorStop(1.00, '#ff00aa'); // magenta
+  rainbowCtx.fillStyle = grad;
+  rainbowCtx.fillRect(0, 0, rainbowCanvas.width, rainbowCanvas.height);
+  const rainbowTexture = new THREE.CanvasTexture(rainbowCanvas);
+  rainbowTexture.wrapS = THREE.ClampToEdgeWrapping;
+  rainbowTexture.wrapT = THREE.ClampToEdgeWrapping;
+  rainbowTexture.minFilter = THREE.LinearFilter;
+  rainbowTexture.magFilter = THREE.LinearFilter;
+
+  // Plane for the rainbow line
+  const rainbowGeo = new THREE.PlaneGeometry(rainbowLength, rainbowWidth);
+  const rainbowMat = new THREE.MeshBasicMaterial({ map: rainbowTexture, transparent: true, side: THREE.DoubleSide });
+  const rainbowMesh = new THREE.Mesh(rainbowGeo, rainbowMat);
+  // Position at midpoint, rotate to align with poles, and lay flat
+  rainbowMesh.position.set((rainbowStart.x + rainbowEnd.x)/2, rainbowY, (rainbowStart.z + rainbowEnd.z)/2);
+  rainbowMesh.rotation.y = angle1 + Math.PI;
+  rainbowMesh.rotation.x = -Math.PI/2;
+  scene.add(rainbowMesh);
+
+// --- TREES ---
+function addTree(x, z, scale=1) {
+// Randomize trunk and leaves
+const trunkH = Math.max(0.6 * scale, (1.5 + Math.random() * 1.7) * scale);
+const trunkR = (0.11 + Math.random() * 0.13) * scale; // SKINNIER trunk
+const trunkGeo = new THREE.CylinderGeometry(trunkR, trunkR * 1.08, trunkH, 8);
+const trunkMat = new THREE.MeshPhongMaterial({ color: 0x8B5A2B });
+const trunk = new THREE.Mesh(trunkGeo, trunkMat);
+trunk.position.set(x, trunkH/2, z);
+
+// Randomly pick geometry for tree leaves
+const leavesR = (0.9 + Math.random() * 0.7) * scale;
+const leavesH = (0.7 + Math.random() * 0.4) * scale;
+const leafColor = Math.random() < 0.22 ? 0x5fa03c : (Math.random() < 0.5 ? 0x228B22 : 0x2e8b57);
+let leavesGeo, leaves;
+const type = Math.floor(Math.random() * 4); // 0=sphere, 1=dodeca, 2=ellipsoid, 3=cone
+if (type === 0) { // Sphere
+leavesGeo = new THREE.SphereGeometry(1, 14, 14);
+leaves = new THREE.Mesh(leavesGeo, new THREE.MeshPhongMaterial({ color: leafColor }));
+leaves.scale.set(leavesR, leavesR, leavesR);
+} else if (type === 1) { // Dodecahedron
+leavesGeo = new THREE.DodecahedronGeometry(1, 0);
+leaves = new THREE.Mesh(leavesGeo, new THREE.MeshPhongMaterial({ color: leafColor, flatShading: true }));
+leaves.scale.set(leavesR, leavesH, leavesR * (0.95 + Math.random()*0.15));
+} else if (type === 2) { // Ellipsoid
+leavesGeo = new THREE.SphereGeometry(1, 12, 12);
+leaves = new THREE.Mesh(leavesGeo, new THREE.MeshPhongMaterial({ color: leafColor }));
+// Ellipsoid: make it tall
+const ellipXZ = leavesR * (1.05 + Math.random()*0.18);
+const ellipY = ellipXZ * (1.5 + Math.random()*0.3);
+leaves.scale.set(ellipXZ, ellipY, ellipXZ);
+} else { // Cone
+// Cone: make it tall
+const coneHeight = leavesR * (2.2 + Math.random()*0.3);
+leavesGeo = new THREE.ConeGeometry(leavesR, coneHeight, 10);
+leaves = new THREE.Mesh(leavesGeo, new THREE.MeshPhongMaterial({ color: leafColor }));
+// Optionally scale y a bit more for extra tallness
+leaves.scale.y = 1.3 + Math.random()*0.2;
+}
+// Place leaves directly on top of trunk, no gap
+if (type === 0) { // Sphere
+  leaves.position.set(x, trunkH + leavesR, z);
+} else if (type === 1) { // Dodecahedron
+  leaves.position.set(x, trunkH + leavesH/2, z);
+} else if (type === 2) { // Ellipsoid
+  leaves.position.set(x, trunkH + leaves.scale.y/2, z);
+} else { // Cone
+  // Cone height = geometry height * scale.y
+  const coneHeight = leaves.geometry.parameters.height * leaves.scale.y;
+  leaves.position.set(x, trunkH + coneHeight/2, z);
+}
+scene.add(trunk);
+scene.add(leaves);
+    if (!window.obstacles) window.obstacles = [];
+    // Use leavesR as approx radius
+    window.obstacles.push({type: 'tree', x, z, radius: leavesR * 1.1});
   }
   // Fixed tree positions (relative to center  // Procedurally add 200 random trees in rings around the track
-  const treePositions = [
-    [200, 210], [-250, 230], [300, -180], [-320, -220], [0, 350], [0, -350], [400, 0], [-400, 0],
-    [600, 320], [-600, 320], [650, -330], [-650, -330], [100, 600], [-100, 600], [100, -600], [-100, -600],
-    [500, 500], [-500, 500], [500, -500], [-500, -500], [800, 0], [-800, 0], [0, 800], [0, -800]
-  ];
-  // Add 60 trees just outside the track
-  const ellipseA_outer = ellipseA + 100;
-  const ellipseB_outer = ellipseB + 100;
-  for (let i = 0; i < 60; ++i) {
-    const angle = (i / 60) * Math.PI * 2;
-    const rA = ellipseA_outer + (Math.random() - 0.5) * 20;
-    const rB = ellipseB_outer + (Math.random() - 0.5) * 20;
-    const x = Math.cos(angle) * rA;
-    const z = Math.sin(angle) * rB;
-    treePositions.push([x, z]);
-  }
-  // Add 40 trees just inside the track
-  const ellipseA_inner = ellipseA - 80;
-  const ellipseB_inner = ellipseB - 80;
-  for (let i = 0; i < 40; ++i) {
-    const angle = (i / 40) * Math.PI * 2;
-    const rA = ellipseA_inner + (Math.random() - 0.5) * 18;
-    const rB = ellipseB_inner + (Math.random() - 0.5) * 18;
-    const x = Math.cos(angle) * rA;
-    const z = Math.sin(angle) * rB;
-    treePositions.push([x, z]);
-  }
-  for (let i = 0; i < 200; ++i) {
-    const angle = Math.random() * Math.PI * 2;
-    const ring = 1 + Math.floor(Math.random() * 3); // 1, 2, or 3
-    const radius = 500 + ring * 350 + Math.random() * 200;
-    const x = Math.cos(angle) * radius + (Math.random()-0.5)*70;
-    const z = Math.sin(angle) * radius + (Math.random()-0.5)*70;
-    treePositions.push([x, z]);
-  }
-  treePositions.forEach(([x, z]) => addTree(x, z, 1.7));
 
   // --- MOUNTAINS ---
   function addMountain(x, z, scale=1) {
@@ -533,42 +732,77 @@ function hillY(t) { return 0; }
     const mountain = new THREE.Mesh(geo, mat);
     mountain.position.set(x, height/2, z);
     scene.add(mountain);
-    // Add snow cap (smaller white cone)
-    const snowR = baseR * (0.36 + Math.random()*0.18);
+    // Register mountain as obstacle
+    if (!window.obstacles) window.obstacles = [];
+    window.obstacles.push({type: 'mountain', x, z, radius: baseR * 0.9});
+    // Add snow cap (white cone) with matching base diameter
     const snowH = height * (0.19 + Math.random()*0.08);
+    // Compute mountain radius at the snow base using similar triangles
+    // Mountain tapers from baseR at y=0 to 0 at y=height
+    const snowBaseY = height - snowH + 0.6; // slightly higher to prevent flicker
+    const snowR = baseR * ((height - snowBaseY) / height);
     const snowGeo = new THREE.ConeGeometry(snowR, snowH, 10);
     const snowMat = new THREE.MeshPhongMaterial({ color: 0xffffff, flatShading: true });
     const snow = new THREE.Mesh(snowGeo, snowMat);
-    snow.position.set(x, height - snowH/2 + 0.5, z);
+    snow.position.set(x, height - snowH/2 + 0.6, z);
     scene.add(snow);
   }
   // Fixed mountain positions
-  const mountainPositions = [
-    [800, 0], [-800, 0], [0, 900], [0, -900], [600, 700], [-650, -600]
-  ];
-  mountainPositions.forEach(([x, z]) => addMountain(x, z, 1));
+  // Mountain clusters
+  const numClusters = 6 + Math.floor(Math.random()*5); // 6-10 clusters
+  for (let c = 0; c < numClusters; ++c) {
+    // Pick a random cluster center, far from track
+    let clusterAngle = Math.random() * Math.PI * 2;
+    let clusterRadius = ellipseA + 400 + Math.random()*400;
+    let cx = Math.cos(clusterAngle) * clusterRadius;
+    let cz = Math.sin(clusterAngle) * (clusterRadius * ellipseB / ellipseA);
+    // Number of mountains in this cluster
+    let count = 3 + Math.floor(Math.random()*18); // 3-20
+    for (let m = 0; m < count; ++m) {
+      // Offset from cluster center
+      let theta = Math.random() * Math.PI * 2;
+      let r = 18 + Math.random()*60;
+      let mx = cx + Math.cos(theta) * r;
+      let mz = cz + Math.sin(theta) * r * (ellipseB/ellipseA);
+      // Random scale for base diameter
+      let scale = 0.6 + Math.random()*1.2;
+      addMountain(mx, mz, scale);
+    }
+  }
 
   // --- Place mango at start ---
   resetMango(trackCurve);
 
   // --- Golden Rings ---
   rings = []; // clear previous rings
-  const numRings = 18;
+  const numRings = 20;
   const ringRadius = 2.2;
   const tubeRadius = 0.35;
-  for (let i = 0; i < numRings; ++i) {
+  let placedRings = 0;
+  let attempts = 0;
+  while (placedRings < numRings && attempts < numRings * 10) {
     const t = Math.random();
+    attempts++;
+    // Exclude rings near start/finish (first 8% and last 8% of track)
+    if (t < 0.08 || t > 0.92) continue;
     const pt = trackCurve.getPointAt(t);
+    const tangent = trackCurve.getTangentAt(t);
+    const normal = new THREE.Vector3(-tangent.z, 0, tangent.x).normalize();
+    // Random offset within road border
+    const lateralMax = roadWidth/2 - ringRadius - 0.3;
+    const lateral = (Math.random() * 2 - 1) * lateralMax;
+    const ringPos = pt.clone().add(normal.clone().multiplyScalar(lateral));
     const ringGeo = new THREE.TorusGeometry(ringRadius, tubeRadius, 16, 64);
     const ringMat = new THREE.MeshPhongMaterial({ color: 0xffd700, shininess: 80 });
     const ring = new THREE.Mesh(ringGeo, ringMat);
-    ring.position.set(pt.x, pt.y + 3.2, pt.z); // floating above road
+    ring.position.set(ringPos.x, ringPos.y + 3.2, ringPos.z); // floating above road
     // No rotation.x: keep vertical
     scene.add(ring);
     rings.push(ring);
-
+    placedRings++;
   }
 }
+// <-- This closes the main Three.js setup function
 
 function resetMango(trackCurve) {
   mangoPos = new THREE.Vector3(start.x, start.y + 0.3, start.z);
@@ -659,7 +893,7 @@ function animate() {
   if (Array.isArray(rings)) {
     for (let i = rings.length - 1; i >= 0; --i) {
       const ring = rings[i];
-      ring.rotation.y -= 0.015;
+      ring.rotation.y -= 0.045;
       let collected = false;
       players.forEach((player, idx) => {
         const dx = ring.position.x - player.kart.position.x;
@@ -682,16 +916,36 @@ function animate() {
   // Split-screen render
   renderer.setScissorTest(true);
   // Left (Player 1)
+  window.camera1.aspect = (window.innerWidth/2) / window.innerHeight;
+  window.camera1.updateProjectionMatrix();
   renderer.setViewport(0, 0, window.innerWidth/2, window.innerHeight);
   renderer.setScissor(0, 0, window.innerWidth/2, window.innerHeight);
   updateCameraForPlayer(window.camera1, players[0]);
   renderer.render(scene, window.camera1);
   // Right (Player 2)
+  window.camera2.aspect = (window.innerWidth/2) / window.innerHeight;
+  window.camera2.updateProjectionMatrix();
   renderer.setViewport(window.innerWidth/2, 0, window.innerWidth/2, window.innerHeight);
   renderer.setScissor(window.innerWidth/2, 0, window.innerWidth/2, window.innerHeight);
   updateCameraForPlayer(window.camera2, players[1]);
   renderer.render(scene, window.camera2);
   renderer.setScissorTest(false);
+  // Animate dust particles
+  if (window.dustParticles) {
+    for (let i = window.dustParticles.length - 1; i >= 0; --i) {
+      const p = window.dustParticles[i];
+      p.userData.t += 0.03 + Math.random()*0.03;
+      p.material.opacity = Math.max(0, 0.5 - p.userData.t*1.1);
+      p.position.y += 0.04 + Math.random()*0.03;
+      p.position.x += (Math.random()-0.5)*0.012;
+      p.position.z += (Math.random()-0.5)*0.012;
+      p.scale.multiplyScalar(0.97);
+      if (p.material.opacity <= 0.01 || p.scale.x < 0.05) {
+        scene.remove(p);
+        window.dustParticles.splice(i, 1);
+      }
+    }
+  }
   requestAnimationFrame(animate);
 }
 
@@ -735,9 +989,51 @@ function updatePlayer(player) {
   player.pos.x += Math.sin(player.dir) * moveDist;
   player.pos.z += Math.cos(player.dir) * moveDist;
   player.pos.y = roadPt.y + 0.3;
+  // --- Obstacle collision check (for Player) ---
+  if (window.obstacles) {
+    for (const obs of window.obstacles) {
+      const dx = player.pos.x - obs.x;
+      const dz = player.pos.z - obs.z;
+      const dist = Math.sqrt(dx*dx + dz*dz);
+      const minDist = 1.1 + obs.radius; // 1.1: kart body radius approx
+      if (dist < minDist) {
+        // Bounce back: push out and reduce speed
+        const overlap = minDist - dist + 0.01;
+        const pushX = (dx/dist) * overlap;
+        const pushZ = (dz/dist) * overlap;
+        player.pos.x += pushX;
+        player.pos.z += pushZ;
+        if (player.speed !== undefined) player.speed *= -0.25;
+        break;
+      }
+    }
+  }
   // Update kart position
   player.kart.position.copy(player.pos);
   player.kart.rotation.y = player.dir;
+
+  // --- Dust effect ---
+  if (!window.dustParticles) window.dustParticles = [];
+  // Only emit dust if moving
+  if (Math.abs(player.speed) > 0.07) {
+    const rearOffset = -1.0; // rear of kart
+    const dustPos = new THREE.Vector3(
+      player.pos.x + Math.sin(player.dir) * rearOffset,
+      player.pos.y + 0.23 + Math.random()*0.11,
+      player.pos.z + Math.cos(player.dir) * rearOffset
+    );
+    for (let i = 0; i < 2; ++i) {
+      const geo = new THREE.SphereGeometry(0.17 + Math.random()*0.09, 6, 6);
+      const mat = new THREE.MeshPhongMaterial({ color: 0xd2b48c, transparent: true, opacity: 0.5 });
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.position.copy(dustPos);
+      mesh.position.x += (Math.random()-0.5)*0.28;
+      mesh.position.z += (Math.random()-0.5)*0.28;
+      mesh.userData = { t: 0 };
+      scene.add(mesh);
+      window.dustParticles.push(mesh);
+    }
+  }
 }
 
 function updateCameraForPlayer(cam, player) {
@@ -760,9 +1056,10 @@ function updateCameraForPlayer(cam, player) {
  */
 function sparkleAt(pos) {
   const group = new THREE.Group();
-  for (let i = 0; i < 14; ++i) {
-    const geo = new THREE.SphereGeometry(0.11 + Math.random()*0.07, 6, 6);
-    const mat = new THREE.MeshBasicMaterial({ color: 0xffffcc, transparent: true, opacity: 0.85 });
+  // Main bright particles
+  for (let i = 0; i < 34; ++i) {
+    const geo = new THREE.SphereGeometry(0.22 + Math.random()*0.16, 10, 10);
+    const mat = new THREE.MeshStandardMaterial({ color: 0xffffe0, emissive: 0xfff880, emissiveIntensity: 1.3, metalness: 0.8, roughness: 0.18, transparent: true, opacity: 0.97 });
     const mesh = new THREE.Mesh(geo, mat);
     const theta = Math.random() * Math.PI * 2;
     const phi = Math.random() * Math.PI;
@@ -771,19 +1068,33 @@ function sparkleAt(pos) {
       Math.cos(phi),
       Math.sin(phi)*Math.sin(theta)
     );
-    mesh.position.multiplyScalar(0.3 + Math.random()*0.5);
+    mesh.position.multiplyScalar(0.55 + Math.random()*0.77);
+    group.add(mesh);
+  }
+  // Add shiny highlight particles
+  for (let i = 0; i < 8; ++i) {
+    const geo = new THREE.SphereGeometry(0.15 + Math.random()*0.22, 16, 16);
+    const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xffffcc, emissiveIntensity: 2.5, metalness: 1.0, roughness: 0.09, transparent: true, opacity: 0.85 });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.position.set(
+      (Math.random()-0.5)*1.2,
+      (Math.random()-0.5)*1.2,
+      (Math.random()-0.5)*1.2
+    );
     group.add(mesh);
   }
   group.position.copy(pos);
   scene.add(group);
   let t = 0;
   function animateSparkle() {
-    t += 0.06;
+    t += 0.021; // slower for longer effect
     group.children.forEach((m, idx) => {
-      m.material.opacity = Math.max(0, 0.85 - t*1.2);
-      m.position.multiplyScalar(1.11 + 0.03*Math.sin(idx + t*8));
+      m.material.opacity = Math.max(0, m.material.opacity - t*0.43); // fade slower
+      m.material.emissiveIntensity = Math.max(0, (m.material.emissiveIntensity || 1.3) * (1.025 - t*0.6));
+      m.position.multiplyScalar(1.07 + 0.023*Math.sin(idx + t*8));
+      m.scale.multiplyScalar(1.01 - t*0.11);
     });
-    if (t < 0.5) {
+    if (t < 1.15) {
       requestAnimationFrame(animateSparkle);
     } else {
       scene.remove(group);
@@ -791,6 +1102,7 @@ function sparkleAt(pos) {
   }
   animateSparkle();
 }
+
 
 /**
  * Shows a countdown overlay and enables driving after "Go!!!".
@@ -823,7 +1135,7 @@ function startCountdown() {
     countdownElem.style.top = '0';
     countdownElem.style.left = '0';
     countdownElem.style.width = '100vw';
-    countdownElem.style.height = '100vh';
+    countdownElem.style.height = '80vh'; // 20% less height for rectangle
     countdownElem.style.justifyContent = 'center';
     countdownElem.style.alignItems = 'center';
     countdownElem.style.fontSize = '7vw';
