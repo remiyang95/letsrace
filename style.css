@@ -1,11 +1,82 @@
+html, body {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
 body {
   background: #181825;
   color: #fff;
   font-family: 'Press Start 2P', monospace, Arial, sans-serif;
+  text-align: center;
+  min-height: 100vh;
+}
+#threejs-container {
+  width: 100vw;
+  height: 100vh;
+  min-height: 100vh;
   margin: 0;
   padding: 0;
-  text-align: center;
+  display: block;
+  position: relative;
+  overflow: hidden;
 }
+
+#countdown {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 65vh;
+  font-size: 8em;
+  font-family: 'Press Start 2P', monospace, Arial, sans-serif;
+  color: #fff;
+  text-shadow: 0 0 32px #000, 0 4px 32px #bfa200;
+  font-weight: bold;
+  z-index: 2000;
+  pointer-events: none;
+  user-select: none;
+  opacity: 1;
+  transition: opacity 0.3s;
+}
+
+#ring-counter {
+  position: fixed;
+  top: 36px;
+  right: 36px;
+  width: 160px;
+  height: 160px;
+  background: #e0e0e0;
+  color: #bfa200;
+  font-size: 3.5em;
+  font-family: 'Press Start 2P', monospace, Arial, sans-serif;
+  padding: 0;
+  border-radius: 32px;
+  z-index: 1000;
+  box-shadow: 0 4px 18px #000a;
+  letter-spacing: 2px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  overflow: hidden;
+}
+#ring-counter #ring-count {
+  font-weight: bold;
+  color: #000;
+  font-size: 2.1em;
+  margin-top: 12px;
+  word-break: break-all;
+  line-height: 1;
+}
+
+
+
+
 #game-ui {
   margin-top: 24px;
 }

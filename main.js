@@ -2,35 +2,41 @@
 // Let's Race! - 3D Mario Kart-style Game (Three.js// ===============================
 // Core 3D scene setup, track, kart, and controls
 
-// --- GLOBALS & GAME STATE ---
-let trackCurve; // Make trackCurve accessible everywhere
+// ===============================
+// GLOBALS & GAME STATE
+// ===============================
+let trackCurve; // Track spline
 let keys = {};
+let scene, camera, renderer, kart;
+let rings = [], ringCount = 0;
+let currentMap = 0;
+let allowDrive = false;
+let gameRunning = false;
+let start, next;
 window.addEventListener('keydown', (e) => { keys[e.code] = true; });
 window.addEventListener('keyup', (e) => { keys[e.code] = false; });
-let scene, camera, renderer, kart;
-let currentMap = 0;
-let gameRunning = false;
-let start, next; // GLOBAL start/next for track use
 
-// --- GAME CONTROL CONSTANTS ---
+// ===============================
+// GAME CONSTANTS
+// ===============================
 const wheelbase = 1.1;
-const maxSteer = Math.PI/6 * 1.5; // 45 degrees (increased by 50%)
-const steerSpeed = 0.0005; // Slower, more gradual turning
-const steerFriction = 0.018; // Slower return to center
-const maxFwd = 0.32, maxRev = -0.08, accel = 0.003, brake = 0.025, friction = 0.002; // Slightly faster top speed
+const maxSteer = Math.PI/6 * 1.5; // 45 degrees
+const steerSpeed = 0.0005;
+const steerFriction = 0.018;
+const maxFwd = 0.32 * 2.4, maxRev = -0.08 * 2.4, accel = 0.0039, brake = 0.025, friction = 0.0026;
 
-// === GLOBAL CONSTANTS ===
-const ellipseA = 320; // x-radius (20x larger)
-const ellipseB = 200; // z-radius (20x larger)
-const ellipseCount = 16;
+// Track/scene constants
+const ellipseA = 320, ellipseB = 200, ellipseCount = 16;
 const groundRadius = ellipseA + 850;
-
 const maps = [
   { name: 'Circuit Plaza', asset: null },
   { name: 'Desert Drift', asset: null },
   { name: 'Mountain Loop', asset: null },
 ];
 
+/**
+ * Initializes the Three.js scene, camera, renderer, lighting, and environment.
+ */
 function initThreeJS() {
   // ===============================
   // SCENE, CAMERA, RENDERER
@@ -44,12 +50,12 @@ scene = new THREE.Scene();
   scene.background = new THREE.Color(0x87ceeb); // Sky blue
 
 
-  camera = new THREE.PerspectiveCamera(75, window.innerWidth / (0.8 * window.innerHeight), 0.1, 1000);
+  camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
   camera.position.set(0, 5, -12);
   camera.lookAt(0, 0, 0);
 
   renderer = new THREE.WebGLRenderer({ antialias: true });
-  renderer.setSize(window.innerWidth, 0.8 * window.innerHeight);
+  renderer.setSize(window.innerWidth, window.innerHeight);
   document.getElementById('threejs-container').appendChild(renderer.domElement);
 
 
@@ -86,7 +92,7 @@ function hillY(t) { return 0; }
     const cx = (Math.random()-0.5) * (ellipseA+600);
     const cz = (Math.random()-0.5) * (ellipseB+600);
     const cy = 120 + Math.random()*60;
-    const parts = 2 + Math.floor(Math.random()*3);
+    const parts = 5 + Math.floor(Math.random()*3); // 5-7 spheres
     for (let j = 0; j < parts; ++j) {
       const sphGeo = new THREE.SphereGeometry(12 + Math.random()*8, 12, 12);
       const sphMat = new THREE.MeshPhongMaterial({ color: 0xffffff, flatShading: true });
@@ -130,12 +136,12 @@ function hillY(t) { return 0; }
   }
   for (let i = 0; i < 40; ++i) {
     let angle, radius, x, z;
-    // Keep bushes off the road: radius must be outside 1.2x road ellipse
+    // Keep bushes well off the road: radius must be outside 1.35x road ellipse
     while (true) {
       angle = Math.random() * Math.PI * 2;
-      // Minimum bush distance from center: 1.2x road ellipse
-      const minA = ellipseA * 1.2;
-      const minB = ellipseB * 1.2;
+      // Minimum bush distance from center: 1.35x road ellipse
+      const minA = ellipseA * 1.35;
+      const minB = ellipseB * 1.35;
       radius = minA + Math.random() * (groundRadius - minA - 50);
       x = Math.cos(angle) * radius;
       z = Math.sin(angle) * (radius * ellipseB / ellipseA);
@@ -143,13 +149,13 @@ function hillY(t) { return 0; }
       if ((x*x)/(minA*minA) + (z*z)/(minB*minB) > 1.0) break;
     }
     const bush = new THREE.Group();
-    for (let j = 0; j < 2 + Math.floor(Math.random()*3); ++j) {
-      const bx = x + (Math.random()-0.5)*12;
-      const bz = z + (Math.random()-0.5)*12;
-      const bushGeo = new THREE.SphereGeometry(6 + Math.random()*3, 12, 12);
+    for (let j = 0; j < 2 + Math.floor(Math.random()*2); ++j) {
+      const bx = x + (Math.random()-0.5)*7; // tighter cluster
+      const bz = z + (Math.random()-0.5)*7;
+      const bushGeo = new THREE.SphereGeometry(3 + Math.random()*1.5, 12, 12); // smaller
       const bushMat = new THREE.MeshPhongMaterial({ color: 0x267a2a });
       const bushPart = new THREE.Mesh(bushGeo, bushMat);
-      bushPart.position.set(bx, 4 + Math.random()*2, bz);
+      bushPart.position.set(bx, 3 + Math.random()*1.2, bz);
       bush.add(bushPart);
     }
     scene.add(bush);
@@ -433,19 +439,23 @@ const hubcapRadius = wheelRadius * 0.8;
   const bannerGeo = new THREE.PlaneGeometry(bannerWidth, bannerHeight);
   // Banner texture with text
   function makeBannerTexture() {
-    const w = 512, h = 128;
+    const w = 2048, h = 512;
     const canvas = document.createElement('canvas');
     canvas.width = w; canvas.height = h;
     const ctx = canvas.getContext('2d');
     ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, w, h);
-    ctx.strokeStyle = '#111'; ctx.lineWidth = 8;
+    ctx.strokeStyle = '#111'; ctx.lineWidth = 32;
     ctx.strokeRect(0, 0, w, h);
-    ctx.font = 'bold 64px sans-serif';
-    ctx.fillStyle = '#222';
+    ctx.font = 'bold 260px sans-serif';
+    ctx.fillStyle = '#000';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText("LET'S RACE!", w/2, h/2);
-    return new THREE.CanvasTexture(canvas);
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.minFilter = THREE.LinearFilter;
+    texture.magFilter = THREE.NearestFilter;
+    texture.needsUpdate = true;
+    return texture;
   }
   const bannerMat = new THREE.MeshPhongMaterial({ map: makeBannerTexture(), side: THREE.DoubleSide });
   const banner = new THREE.Mesh(bannerGeo, bannerMat);
@@ -552,12 +562,25 @@ const hubcapRadius = wheelRadius * 0.8;
 
   // --- Place mango at start ---
   resetMango(trackCurve);
-}
 
-window.addEventListener('DOMContentLoaded', () => {
-  initThreeJS();
-  animate();
-});
+  // --- Golden Rings ---
+  rings = []; // clear previous rings
+  const numRings = 18;
+  const ringRadius = 2.2;
+  const tubeRadius = 0.35;
+  for (let i = 0; i < numRings; ++i) {
+    const t = Math.random();
+    const pt = trackCurve.getPointAt(t);
+    const ringGeo = new THREE.TorusGeometry(ringRadius, tubeRadius, 16, 64);
+    const ringMat = new THREE.MeshPhongMaterial({ color: 0xffd700, shininess: 80 });
+    const ring = new THREE.Mesh(ringGeo, ringMat);
+    ring.position.set(pt.x, pt.y + 3.2, pt.z); // floating above road
+    // No rotation.x: keep vertical
+    scene.add(ring);
+    rings.push(ring);
+
+  }
+}
 
 function resetMango(trackCurve) {
   mangoPos = new THREE.Vector3(start.x, start.y + 0.3, start.z);
@@ -566,7 +589,11 @@ function resetMango(trackCurve) {
   steerAngle = 0;
 }
 
+/**
+ * Updates the kart's position and steering based on input and physics.
+ */
 function updateMango() {
+  if (!allowDrive) return;
   if (!trackCurve) return;
   // Steering
   if (keys['ArrowLeft'] || keys['KeyA']) steerAngle += steerSpeed;
@@ -631,6 +658,9 @@ function updateMango() {
   if (window.kartFrontRight) window.kartFrontRight.rotation.y = steerAngle;
 }
 
+/**
+ * Main animation loop: updates game state and renders the scene.
+ */
 function animate() {
   updateMango();
   // Camera follows behind and above the car
@@ -644,21 +674,123 @@ function animate() {
     mangoPos.y + 2.2,
     mangoPos.z + Math.cos(mangoDir) * 6
   );
+  // Animate golden rings
+  if (Array.isArray(rings)) {
+    for (let i = rings.length - 1; i >= 0; --i) {
+      const ring = rings[i];
+      ring.rotation.y -= 0.015;
+      // Collision check: treat ring as a sphere (major + tube radius)
+      const ringOuterRadius = 2.2 + 0.35; // match geometry values
+      if (kart) {
+        const dx = ring.position.x - kart.position.x;
+        const dz = ring.position.z - kart.position.z;
+        const horizDist = Math.sqrt(dx * dx + dz * dz);
+        if (horizDist < ringOuterRadius) {
+          // Sparkle effect
+          sparkleAt(ring.position);
+          scene.remove(ring);
+          rings.splice(i, 1);
+          ringCount++;
+  
+          const counterElem = document.getElementById('ring-count');
+          if (counterElem) counterElem.textContent = ringCount;
+  
+        }
+      }
+    }
+  }
   renderer.render(scene, camera);
   requestAnimationFrame(animate);
 }
 
+// Simple sparkle effect: spawn a few quick particles
+/**
+ * Shows a sparkle effect at the given position.
+ */
+function sparkleAt(pos) {
+  const group = new THREE.Group();
+  for (let i = 0; i < 14; ++i) {
+    const geo = new THREE.SphereGeometry(0.11 + Math.random()*0.07, 6, 6);
+    const mat = new THREE.MeshBasicMaterial({ color: 0xffffcc, transparent: true, opacity: 0.85 });
+    const mesh = new THREE.Mesh(geo, mat);
+    const theta = Math.random() * Math.PI * 2;
+    const phi = Math.random() * Math.PI;
+    mesh.position.set(
+      Math.sin(phi)*Math.cos(theta),
+      Math.cos(phi),
+      Math.sin(phi)*Math.sin(theta)
+    );
+    mesh.position.multiplyScalar(0.3 + Math.random()*0.5);
+    group.add(mesh);
+  }
+  group.position.copy(pos);
+  scene.add(group);
+  let t = 0;
+  function animateSparkle() {
+    t += 0.06;
+    group.children.forEach((m, idx) => {
+      m.material.opacity = Math.max(0, 0.85 - t*1.2);
+      m.position.multiplyScalar(1.11 + 0.03*Math.sin(idx + t*8));
+    });
+    if (t < 0.5) {
+      requestAnimationFrame(animateSparkle);
+    } else {
+      scene.remove(group);
+    }
+  }
+  animateSparkle();
+}
+
+/**
+ * Shows a countdown overlay and enables driving after "Go!!!".
+ */
+function startCountdown() {
+  allowDrive = false;
+  const countdownElem = document.getElementById('countdown');
+  let count = 3;
+  function show(val) {
+    countdownElem.textContent = val;
+    countdownElem.style.opacity = 1;
+    countdownElem.style.display = 'flex';
+  }
+  function hide() {
+    countdownElem.style.opacity = 0;
+    setTimeout(() => { countdownElem.style.display = 'none'; }, 400);
+  }
+  function tick() {
+    if (count > 0) {
+      show(count);
+      count--;
+      setTimeout(tick, 1000);
+    } else if (count === 0) {
+      show('Go!!!');
+      allowDrive = true;
+      setTimeout(() => {
+        hide();
+      }, 900);
+      count--;
+    }
+  }
+  show(count);
+  tick();
+}
+
 window.addEventListener('DOMContentLoaded', () => {
   initThreeJS();
+  let countdownElem = document.getElementById('countdown');
+  if (!countdownElem) {
+    countdownElem = document.createElement('div');
+    countdownElem.id = 'countdown';
+    document.body.appendChild(countdownElem);
+  }
+  startCountdown();
   animate();
 });
-
 // Responsive resize
 window.addEventListener('resize', () => {
-
   if (renderer && camera) {
-    camera.aspect = window.innerWidth / (0.8 * window.innerHeight);
+    camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
-    renderer.setSize(window.innerWidth, 0.8 * window.innerHeight);
+    renderer.setSize(window.innerWidth, window.innerHeight);
   }
 });
