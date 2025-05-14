@@ -1005,7 +1005,7 @@ function showInstructionsOverlay() {
     overlay.style.zIndex = 2000;
     overlay.style.color = '#fff';
     overlay.innerHTML = `
-      <div style="font-size:2.2vw;font-weight:bold;margin-bottom:1vw;">Are you ready, banana racers!</div>
+      <div style="font-size:2.2vw;font-weight:bold;margin-bottom:1vw;">Are you ready, banana racers?</div>
       <div style="font-size:2vw;font-weight:bold;margin-bottom:1.5vw;">Collect more rings than your opponent!</div>
       <hr style="width:40vw;border:0;border-top:2px solid #fff;margin:1.5vw 0;opacity:0.5;">
       <div style="font-size:1.6vw;margin-bottom:2vw;">
