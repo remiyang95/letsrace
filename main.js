@@ -740,9 +740,10 @@ scene.add(leaves);
     // Compute mountain radius at the snow base using similar triangles
     // Mountain tapers from baseR at y=0 to 0 at y=height
     const snowBaseY = height - snowH + 0.6; // slightly higher to prevent flicker
-    const snowR = baseR * ((height - snowBaseY) / height);
+    let snowR = baseR * ((height - snowBaseY) / height);
+    snowR *= 1.03; // Make snow radius slightly larger to avoid z-fighting
     const snowGeo = new THREE.ConeGeometry(snowR, snowH, 10);
-    const snowMat = new THREE.MeshPhongMaterial({ color: 0xffffff, flatShading: true });
+    const snowMat = new THREE.MeshPhongMaterial({ color: 0xffffff, flatShading: true, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
     const snow = new THREE.Mesh(snowGeo, snowMat);
     snow.position.set(x, height - snowH/2 + 0.6, z);
     scene.add(snow);
