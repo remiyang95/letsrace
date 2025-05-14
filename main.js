@@ -30,6 +30,8 @@ let keys = {};
 let scene, camera, renderer;
 let players = [];
 let rings = [], currentMap = 0;
+let speedPatches = [];
+
 
 // Player class
 class Player {
@@ -271,6 +273,78 @@ function hillY(t) { return 0; }
   updateCameraForPlayer(window.camera1, players[0]);
   updateCameraForPlayer(window.camera2, players[1]);
 
+
+  // --- Speed patches (rainbow chevrons) ---
+  function makeChevronTexture() {
+    const w = 256, h = 128;
+    const canvas = document.createElement('canvas');
+    canvas.width = w; canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    // Rainbow chevrons
+    const colors = ['#ff0000','#ff9900','#ffee00','#00cc00','#0066ff','#6600cc'];
+    for (let i = 0; i < 6; ++i) {
+      ctx.save();
+      ctx.translate(w/2, h/2);
+      ctx.rotate(Math.PI/12 * (i-2.5));
+      ctx.beginPath();
+      ctx.moveTo(-w/2+12, -h/2+16);
+      ctx.lineTo(0, -h/2+36);
+      ctx.lineTo(w/2-12, -h/2+16);
+      ctx.lineTo(0, h/2-16);
+      ctx.closePath();
+      ctx.fillStyle = colors[i];
+      ctx.globalAlpha = 0.85;
+      ctx.fill();
+      ctx.restore();
+    }
+    return new THREE.CanvasTexture(canvas);
+  }
+  const chevronTex = makeChevronTexture();
+  const patchW = 7, patchL = 3; // width (across road), length (along road)
+  const patchCount = 20;
+  let patchAttempts = 0;
+  let placedPatches = 0;
+  let usedTs = [];
+  const minTSpacing = 0.035; // Minimum separation along the track
+  while (placedPatches < patchCount && patchAttempts < 300) {
+    patchAttempts++;
+    const t = 0.08 + Math.random()*0.84;
+    // Ensure no t is too close to an existing patch
+    if (usedTs.some(prevT => Math.abs(prevT - t) < minTSpacing || Math.abs(prevT - t + 1) < minTSpacing || Math.abs(prevT - t - 1) < minTSpacing)) continue;
+    const center = trackCurve.getPointAt(t);
+    if (!isPointOnRoad(center.x, center.z, roadWidth-1.2)) continue;
+    // Avoid overlap with obstacles or rings
+    let conflict = false;
+    if (window.obstacles) {
+      for (const obs of window.obstacles) {
+        const dx = obs.x - center.x, dz = obs.z - center.z;
+        if (Math.sqrt(dx*dx + dz*dz) < (obs.radius + patchW/2 + 1.2)) { conflict = true; break; }
+      }
+    }
+    for (const ring of (rings||[])) {
+      const dx = ring.position.x - center.x, dz = ring.position.z - center.z;
+      if (Math.sqrt(dx*dx + dz*dz) < 2.5 + patchW/2) { conflict = true; break; }
+    }
+    for (const patch of speedPatches) {
+      const dx = patch.center.x - center.x, dz = patch.center.z - center.z;
+      if (Math.sqrt(dx*dx + dz*dz) < patchW*1.1) { conflict = true; break; }
+    }
+    if (conflict) continue;
+    // All chevrons point in the forward direction (track tangent)
+    const tangent = trackCurve.getTangentAt(t);
+    const angle = Math.atan2(tangent.x, tangent.z);
+    const geo = new THREE.PlaneGeometry(patchW, patchL);
+    const mat = new THREE.MeshBasicMaterial({ map: chevronTex, transparent: true, side: THREE.DoubleSide });
+    const patchMesh = new THREE.Mesh(geo, mat);
+    patchMesh.position.set(center.x, 0.06, center.z);
+    patchMesh.rotation.x = -Math.PI/2;
+    patchMesh.rotation.z = angle;
+    patchMesh.renderOrder = 2;
+    scene.add(patchMesh);
+    speedPatches.push({center, t, mesh: patchMesh, angle, w: patchW, l: patchL});
+    usedTs.push(t);
+    placedPatches++;
+  }
 
   // --- Clouds in the sky ---
   for (let i = 0; i < 18; ++i) {
@@ -884,6 +958,40 @@ function updateMango() {
 /**
  * Main animation loop: updates game state and renders the scene.
  */
+// Overlay helpers
+function showOverlay(text, side = null) {
+  let overlayId = side === null ? 'draw-overlay' : (side === 0 ? 'winlose-overlay-1' : 'winlose-overlay-2');
+  let overlay = document.getElementById(overlayId);
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.id = overlayId;
+    overlay.style.position = 'fixed';
+    overlay.style.top = side === null ? '40%' : '20%';
+    overlay.style.left = side === null ? '0' : (side === 0 ? '0' : '50%');
+    overlay.style.width = side === null ? '100%' : '50%';
+    overlay.style.height = '30%';
+    overlay.style.display = 'flex';
+    overlay.style.justifyContent = 'center';
+    overlay.style.alignItems = 'center';
+    overlay.style.fontSize = '4vw';
+    overlay.style.fontWeight = 'bold';
+    overlay.style.color = side === null ? '#fff' : (side === 0 ? '#2ecc40' : '#ff4136');
+    overlay.style.background = side === null ? 'rgba(0,0,0,0.7)' : 'rgba(0,0,0,0.5)';
+    overlay.style.zIndex = 1000;
+    overlay.style.pointerEvents = 'none';
+    overlay.style.textShadow = '2px 2px 8px #000';
+    document.body.appendChild(overlay);
+  }
+  overlay.textContent = text;
+  overlay.style.display = 'flex';
+}
+function hideOverlays() {
+  ['winlose-overlay-1','winlose-overlay-2','draw-overlay'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = 'none';
+  });
+}
+
 function animate() {
   console.log('Rendering frame');
   // Update both players (movement only if allowed)
@@ -912,6 +1020,23 @@ function animate() {
           collected = true;
         }
       });
+    }
+  }
+
+  // Check for end of game (all rings collected)
+  if (Array.isArray(rings) && rings.length === 0 && !window.gameEnded) {
+    window.gameEnded = true;
+    allowDrive = false;
+    const p1 = players[0].ringCount;
+    const p2 = players[1].ringCount;
+    if (p1 > p2) {
+      showOverlay('You win!', 0);
+      showOverlay('You lose!', 1);
+    } else if (p2 > p1) {
+      showOverlay('You win!', 1);
+      showOverlay('You lose!', 0);
+    } else {
+      showOverlay("It's a draw!", null);
     }
   }
   // Split-screen render
@@ -951,8 +1076,44 @@ function animate() {
 }
 
 function updatePlayer(player) {
+  // Speed patch boost logic
+  if (!player.speedPatchTimer) player.speedPatchTimer = 0;
+  if (!player.speedPatchCooldown) player.speedPatchCooldown = 0;
+  // Check for patch collision
+  let boosted = false;
+  for (const patch of speedPatches) {
+    // Project kart position onto patch local axes
+    const dx = player.kart.position.x - patch.center.x;
+    const dz = player.kart.position.z - patch.center.z;
+    // Rotate to patch local frame
+    const cosA = Math.cos(-patch.angle), sinA = Math.sin(-patch.angle);
+    const localX = dx * cosA - dz * sinA;
+    const localZ = dx * sinA + dz * cosA;
+    if (Math.abs(localX) < patch.w/2 && Math.abs(localZ) < patch.l/2) {
+      if (player.speedPatchCooldown <= 0) {
+        player.speedPatchTimer = 2.2; // seconds of boost
+        player.speedPatchCooldown = 2.0; // cooldown to prevent stacking
+        // Instantly boost speed if not already above normal max
+        if (player.speed < maxFwd * 1.25) {
+          player.speed = maxFwd * 1.5;
+        }
+      }
+      boosted = true;
+      break;
+    }
+  }
+  if (player.speedPatchTimer > 0) {
+    player.speedPatchTimer -= 1/60; // approx per frame
+    player.maxSpeedMultiplier = 2.0;
+    // Optionally add VFX here
+  } else {
+    player.maxSpeedMultiplier = 1.0;
+  }
+  if (player.speedPatchCooldown > 0) player.speedPatchCooldown -= 1/60;
+
   if (!allowDrive) return;
-  // Controls
+
+  // Controls and movement logic (restored)
   const controls = player.controls;
   if (keys[controls.left]) player.steerAngle += steerSpeed;
   if (keys[controls.right]) player.steerAngle -= steerSpeed;
@@ -964,13 +1125,14 @@ function updatePlayer(player) {
   // Acceleration/brake
   if (keys[controls.up]) player.speed += accel;
   if (keys[controls.down]) player.speed -= brake;
-  // Clamp speed
-  player.speed = Math.max(maxRev, Math.min(maxFwd, player.speed));
+  // Clamp speed with patch boost
+  player.speed = Math.max(maxRev, Math.min(maxFwd * (player.maxSpeedMultiplier || 1), player.speed));
   // Friction
   if (!(keys[controls.up] || keys[controls.down])) {
     if (player.speed > 0) player.speed = Math.max(0, player.speed - friction);
-    else if (player.speed < 0) player.speed = Math.min(0, player.speed + friction);
+    else if (player.speed < 0) player.speed = Math.min(0, player.speed + friction * 0.7);
   }
+
   // Move along track
   const moveDist = player.speed;
   // Find closest point on track
