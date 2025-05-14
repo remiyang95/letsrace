@@ -958,7 +958,6 @@ function updateMango() {
 /**
  * Main animation loop: updates game state and renders the scene.
  */
-// Overlay helpers
 function showOverlay(text, side = null) {
   let overlayId = side === null ? 'draw-overlay' : (side === 0 ? 'winlose-overlay-1' : 'winlose-overlay-2');
   let overlay = document.getElementById(overlayId);
@@ -985,12 +984,97 @@ function showOverlay(text, side = null) {
   overlay.textContent = text;
   overlay.style.display = 'flex';
 }
-function hideOverlays() {
-  ['winlose-overlay-1','winlose-overlay-2','draw-overlay'].forEach(id => {
-    const el = document.getElementById(id);
-    if (el) el.style.display = 'none';
-  });
+
+
+// Show instructions overlay at page load
+function showInstructionsOverlay() {
+  let overlay = document.getElementById('instructions-overlay');
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.id = 'instructions-overlay';
+    overlay.style.position = 'fixed';
+    overlay.style.top = '0';
+    overlay.style.left = '0';
+    overlay.style.width = '100vw';
+    overlay.style.height = '100vh';
+    overlay.style.background = 'rgba(0,0,0,0.7)';
+    overlay.style.display = 'flex';
+    overlay.style.flexDirection = 'column';
+    overlay.style.justifyContent = 'center';
+    overlay.style.alignItems = 'center';
+    overlay.style.zIndex = 2000;
+    overlay.style.color = '#fff';
+    overlay.innerHTML = `
+      <div style="font-size:2.2vw;font-weight:bold;margin-bottom:1vw;">Are you ready, banana racers!</div>
+      <div style="font-size:2vw;font-weight:bold;margin-bottom:1.5vw;">Collect more rings than your opponent!</div>
+      <hr style="width:40vw;border:0;border-top:2px solid #fff;margin:1.5vw 0;opacity:0.5;">
+      <div style="font-size:1.6vw;margin-bottom:2vw;">
+        <b>Player 1:</b> WASD &nbsp; &nbsp; <b>Player 2:</b> Arrow Keys
+      </div>
+      <button id="lets-race-btn" style="font-size:2vw;padding:0.7vw 2vw;border-radius:1vw;border:none;background:#2ecc40;color:#fff;font-weight:bold;box-shadow:0 2px 12px #222;cursor:pointer;">Let's Race!</button>
+    `;
+
+function startCountdownOverlay() {
+  let overlay = document.getElementById('countdown-overlay');
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.id = 'countdown-overlay';
+    overlay.style.position = 'fixed';
+    overlay.style.top = '0';
+    overlay.style.left = '0';
+    overlay.style.width = '100vw';
+    overlay.style.height = '100vh';
+    overlay.style.background = 'rgba(0,0,0,0.7)';
+    overlay.style.display = 'flex';
+    overlay.style.justifyContent = 'center';
+    overlay.style.alignItems = 'center';
+    overlay.style.zIndex = 2001;
+    overlay.style.color = '#fff';
+    overlay.style.fontSize = '8vw';
+    overlay.style.fontWeight = 'bold';
+    overlay.style.textShadow = '2px 2px 12px #000';
+    overlay.style.opacity = '1';
+    overlay.style.transition = 'opacity 0.7s';
+    document.body.appendChild(overlay);
+  } else {
+    overlay.style.display = 'flex';
+    overlay.style.opacity = '1';
+  }
+  let count = 3;
+  overlay.textContent = count;
+  allowDrive = false;
+  let interval = setInterval(() => {
+    count--;
+    if (count > 0) {
+      overlay.textContent = count;
+    } else if (count === 0) {
+      overlay.textContent = 'GO!!!';
+    } else {
+      overlay.style.opacity = '0';
+      setTimeout(() => { overlay.style.display = 'none'; }, 700);
+      allowDrive = true;
+      clearInterval(interval);
+    }
+  }, 900);
 }
+
+window.addEventListener('DOMContentLoaded', () => {
+  showInstructionsOverlay();
+  initThreeJS();
+  animate();
+});
+
+    document.body.appendChild(overlay);
+    document.getElementById('lets-race-btn').onclick = function() {
+      overlay.style.display = 'none';
+      startCountdownOverlay();
+    };
+  } else {
+    overlay.style.display = 'flex';
+  }
+}
+
+
 
 function animate() {
   console.log('Rendering frame');
@@ -1329,17 +1413,13 @@ function startCountdown() {
   tick();
 }
 
+// Only use new overlay logic
 window.addEventListener('DOMContentLoaded', () => {
+  showInstructionsOverlay();
   initThreeJS();
-  let countdownElem = document.getElementById('countdown');
-  if (!countdownElem) {
-    countdownElem = document.createElement('div');
-    countdownElem.id = 'countdown';
-    document.body.appendChild(countdownElem);
-  }
-  startCountdown();
   animate();
 });
+
 // Responsive resize
 window.addEventListener('resize', () => {
   if (renderer && window.camera1 && window.camera2) {
