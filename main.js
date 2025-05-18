@@ -974,7 +974,7 @@ function showOverlay(text, side = null) {
     overlay.style.alignItems = 'center';
     overlay.style.fontSize = '4vw';
     overlay.style.fontWeight = 'bold';
-    overlay.style.color = side === null ? '#fff' : (side === 0 ? '#2ecc40' : '#ff4136');
+    overlay.style.color = text.toLowerCase().includes('win') ? '#2ecc40' : '#ff4136';
     overlay.style.background = side === null ? 'rgba(0,0,0,0.7)' : 'rgba(0,0,0,0.5)';
     overlay.style.zIndex = 1000;
     overlay.style.pointerEvents = 'none';
